@@ -185,6 +185,17 @@ export function resolveSpecifier(
  * An explicit extension is used as-is; otherwise each known extension is probed,
  * then the directory's index file. Candidates are relative to the project root
  * because that is the key space node ids live in.
+ *
+ * **A `.js` specifier also probes the TypeScript sources beside it.** This is
+ * not Node's rule — Node resolves `./kart.js` to that exact file or fails. It is
+ * the TypeScript rule, and it is how every TS project is written: the source is
+ * `kart.ts` and the specifier says `./kart.js`, because the emitted JavaScript
+ * needs the extension at runtime. Without this, a TypeScript project's entire
+ * import graph comes back empty and every file looks unreferenced.
+ *
+ * The `.js` candidate is tried first and the TS variants only as fallbacks, so a
+ * project that has both `kart.js` and `kart.ts` still resolves the real `.js`
+ * file exactly as Node would.
  */
 function resolveCandidates(base: string, projectRoot: string): string[] {
   const candidates: string[] = [];
@@ -192,6 +203,12 @@ function resolveCandidates(base: string, projectRoot: string): string[] {
 
   if (/\.[A-Za-z0-9]+$/.test(relativeBase)) {
     candidates.push(relativeBase);
+    if (/\.(?:js|mjs|cjs|jsx)$/.test(relativeBase)) {
+      const stem = relativeBase.replace(/\.(?:js|mjs|cjs|jsx)$/, '');
+      for (const extension of ['.ts', '.tsx', '.mts', '.cts']) {
+        candidates.push(`${stem}${extension}`);
+      }
+    }
   } else {
     for (const extension of RESOLUTION_EXTENSIONS) {
       candidates.push(`${relativeBase}${extension}`);

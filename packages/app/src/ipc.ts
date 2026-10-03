@@ -37,7 +37,17 @@
  * core behind a validated function (SPEC R3/R9), not in an escape hatch here.
  */
 
-import type { SceneFile, SceneEdit } from '@contextforge/core';
+import type {
+  DependencyGraph,
+  FocusDepth,
+  FocusedNode,
+  GraphEdge,
+  GraphNode,
+  GraphSummary,
+  Orphan,
+  SceneFile,
+  SceneEdit,
+} from '@contextforge/core';
 
 /**
  * The result of an operation that can fail.
@@ -224,6 +234,31 @@ export const CHANNELS = {
    * cheap request rather than something inferred from a compiled prompt.
    */
   rankFiles: 'context:rank',
+
+  // ── Graph (Step 5) ─────────────────────────────────────────────────────
+  /**
+   * The file-level dependency graph for the open project.
+   *
+   * Separate from `rankFiles` because the graph is a property of the project,
+   * not of a question. A rank is only meaningful against a description of what
+   * is broken; a graph is what the developer browses when there is nothing
+   * broken yet. Building it is the same extraction `compileContext` performs,
+   * so this costs no new work — it exposes one the Context screen already did.
+   */
+  projectGraph: 'graph:project',
+
+  // ── Graph (Step 5) ─────────────────────────────────────────────────────
+  /**
+   * The neighbourhood around one node, at depth 1 or 2.
+   *
+   * Separate from `projectGraph` because the renderer cannot do this itself:
+   * `@contextforge/core` is `external` in the renderer build, sound only while
+   * every renderer import of it is type-only. Analysing the graph in the
+   * renderer would need a value import, which would leave a bare specifier the
+   * browser sandbox cannot resolve and the app would fail to mount. So the
+   * renderer sends the graph it was given straight back and core does the work.
+   */
+  projectFocus: 'graph:focus',
 
   // ── Brief (Step 4) ──────────────────────────────────────────────────────
   /** Build `brief.md` and write it under `.contextforge/`. */
@@ -609,6 +644,41 @@ export interface IpcRequests {
   [CHANNELS.rankFiles]: {
     request: { issue: string; logs: string };
     response: Result<{ files: RankedFileRow[] }>;
+  };
+
+  /**
+   * The open project's file-level dependency graph.
+   *
+   * Raw nodes and edges, with no focus or orphan analysis applied: the screen
+   * runs those in core over this exact data. Sending a precomputed
+   * neighbourhood alongside the graph it came from would be two derivations of
+   * one thing, which is the D44 defect in a new place.
+   */
+  [CHANNELS.projectGraph]: {
+    request: Record<string, never>;
+    response: Result<{
+      nodes: GraphNode[];
+      edges: GraphEdge[];
+      /** core's counts, so the screen shows them without deriving its own. */
+      summary: GraphSummary;
+      /** Unreferenced files, each with the reason it was flagged. */
+      orphans: Orphan[];
+    }>;
+  };
+
+  /**
+   * The neighbourhood around one node.
+   *
+   * `graph` is sent back rather than looked up: the main process does not cache
+   * the manifest, and this keeps the two calls symmetric — both take the graph
+   * as their input, so neither can act on a different one.
+   */
+  [CHANNELS.projectFocus]: {
+    request: { id: string; depth: FocusDepth; graph: DependencyGraph };
+    response: Result<{
+      nodes: FocusedNode[];
+      edges: { from: string; to: string; kind: string }[];
+    }>;
   };
 
   // ── Brief ───────────────────────────────────────────────────────────────

@@ -53,9 +53,12 @@ import {
   captureAndWrite,
   compileContext,
   emptyScene,
+  edgesWithin,
   extractFileReferences,
   extractGodotProject,
   extractJsProject,
+  findOrphans,
+  focusNeighbourhood,
   formatUnifiedDiff,
   getHistoryStatus,
   generateBrief,
@@ -69,6 +72,7 @@ import {
   rankRelevantFiles,
   saveScene,
   sceneHistoryStatus,
+  summariseGraph,
   undoSceneEdit,
   validateAllSyntax,
   validateBriefRequest,
@@ -76,7 +80,14 @@ import {
   validateScene,
   writeFileBlocks,
   type Manifest,
+  type DependencyGraph,
+  type FocusDepth,
+  type FocusedNode,
+  type GraphEdge,
+  type GraphNode,
+  type GraphSummary,
   type HistoryActionResult,
+  type Orphan,
   type SceneEdit,
   type SceneFile,
 } from '@contextforge/core';
@@ -756,6 +767,8 @@ interface Requests {
     fullFiles?: boolean;
   };
   [CHANNELS.rankFiles]: { issue: string; logs: string };
+  [CHANNELS.projectGraph]: Record<string, never>;
+  [CHANNELS.projectFocus]: { id: string; depth: FocusDepth; graph: DependencyGraph };
   [CHANNELS.previewPatch]: { text: string };
   [CHANNELS.applyPatch]: { text: string; applyAnyway?: boolean };
   [CHANNELS.patchHistory]: Record<string, never>;
@@ -1474,6 +1487,73 @@ export class AppBackend {
   }
 
   /**
+   * The file-level dependency graph for the open project, with core's own
+   * analysis of it.
+   *
+   * The summary and the orphan list are computed here rather than in the
+   * renderer, and that is forced rather than chosen: `@contextforge/core` is
+   * `external` in the renderer build, so a value import of it would leave a bare
+   * specifier the browser cannot resolve and the app would fail to mount. The
+   * screen receives the counts rather than deriving them, which also means there
+   * is exactly one derivation — the D44 defect was two layers counting one fact.
+   */
+  projectGraph(
+    _request: Requests[typeof CHANNELS.projectGraph],
+  ): Result<{
+    nodes: GraphNode[];
+    edges: GraphEdge[];
+    summary: GraphSummary;
+    orphans: Orphan[];
+  }> {
+    const root = this.root;
+    if (root === null) return fail('No project is open, so there is no graph to show.');
+
+    try {
+      const manifest = this.buildManifestFor(root);
+      const graph: DependencyGraph = { nodes: manifest.nodes, edges: manifest.edges };
+      return ok({
+        nodes: graph.nodes,
+        edges: graph.edges,
+        summary: summariseGraph(graph),
+        orphans: findOrphans(graph),
+      });
+    } catch (error) {
+      // The extractors throw on a missing folder and on an unreadable file. A
+      // graph screen that renders an empty canvas for a project that failed to
+      // read looks identical to a project with no files, so the reason is
+      // returned rather than swallowed.
+      return fail(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  /**
+   * The neighbourhood around one node, at depth 1 or 2.
+   *
+   * Takes the graph as its request rather than re-extracting the project: this
+   * runs on every node click, and a full extraction per click would make the
+   * graph unusable at any real project size. The cost of sending the graph back
+   * is honest and worth naming — at 1,000 files it is a few hundred KB per
+   * click — and the fix, if it ever shows up, is for this class to cache the
+   * manifest per project root, not to make the renderer do the analysis.
+   */
+  projectFocus(request: Requests[typeof CHANNELS.projectFocus]): Result<{
+    nodes: FocusedNode[];
+    edges: { from: string; to: string; kind: string }[];
+  }> {
+    const graph = request.graph;
+    if (graph === undefined) return fail('No graph was sent to focus within.');
+
+    const nodes = focusNeighbourhood(graph, request.id, request.depth);
+    return ok({
+      nodes,
+      // Only edges with both endpoints drawn. An edge leaving the neighbourhood
+      // would point at a node that is not on screen, which reads as a bug in the
+      // graph rather than as a deliberate boundary.
+      edges: edgesWithin(graph, new Set(nodes.map((n) => n.node.id))),
+    });
+  }
+
+  /**
    * Start (or restart) the prefab loader for the open project.
    *
    * The loader loads the registry once and then watches for changes itself, so
@@ -1777,6 +1857,16 @@ const HANDLERS: ReadonlyArray<(backend: AppBackend) => ChannelBinding> = [
   (backend) => [
     CHANNELS.rankFiles,
     (request: Requests[typeof CHANNELS.rankFiles]) => Promise.resolve(backend.rankFiles(request)),
+  ],
+  (backend) => [
+    CHANNELS.projectGraph,
+    (request: Requests[typeof CHANNELS.projectGraph]) =>
+      Promise.resolve(backend.projectGraph(request)),
+  ],
+  (backend) => [
+    CHANNELS.projectFocus,
+    (request: Requests[typeof CHANNELS.projectFocus]) =>
+      Promise.resolve(backend.projectFocus(request)),
   ],
   (backend) => [
     CHANNELS.previewPatch,

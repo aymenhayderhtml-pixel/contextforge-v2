@@ -50,6 +50,20 @@ export {
   withDependedOnBy,
 } from './graph/reverse.js';
 
+export {
+  edgesWithin,
+  findOrphans,
+  focusNeighbourhood,
+  summariseGraph,
+} from './graph/analysis.js';
+export type {
+  FocusedNode,
+  FocusDepth,
+  GraphSummary,
+  Orphan,
+  OrphanReason,
+} from './graph/analysis.js';
+
 // ── Parsers ──────────────────────────────────────────────────────────────────
 export {
   grammarForPath,

@@ -133,6 +133,35 @@ describe('the sidebar no longer disables the screens it ships', () => {
   it('still lets an explicit disabled flag win, so callers keep that power', () => {
     expect(sidebar).toMatch(/if\s*\(typeof screen\.disabled\s*===\s*'boolean'\)/);
   });
+
+  it('gates Graph on an open project too', () => {
+    // The Graph screen extracts from the files on disk, so it has the same
+    // precondition as Context and Patch. Left ungated it would be clickable
+    // with nothing open, and would render an empty canvas that looks exactly
+    // like a project with no files.
+    expect(sidebar).toMatch(/screen\.id === 'graph'/);
+  });
+
+  it('every Cytoscape attribute selector quotes its value', () => {
+    // Cytoscape rejects `node[focus = true]` — an attribute value is a quoted
+    // string, not a bare identifier. It throws at draw time and leaves the
+    // canvas empty, which is precisely the state focus mode exists to show, so
+    // the failure is invisible: the screen renders, just with nothing on it.
+    // There is no unit test for Cytoscape here (no jsdom), so this is the
+    // assertion that stands in for one.
+    const graph = read('renderer/screens/GraphScreen.svelte');
+    const attributes = [...graph.matchAll(/selector:\s*'([^']*\[[^\]]*\])'/g)].map((m) => m[1]!);
+    expect(attributes.length, 'GraphScreen should use attribute selectors').toBeGreaterThan(0);
+
+    for (const selector of attributes) {
+      for (const [, , value] of selector.matchAll(/\[\s*([\w-]+)\s*=\s*([^\]]+)\]/g)) {
+        expect(
+          value.trim().startsWith('"'),
+          `selector ${selector} compares ${value.trim()} unquoted; Cytoscape requires a string`,
+        ).toBe(true);
+      }
+    }
+  });
 });
 
 describe('no screen writes state that the effect reading it depends on', () => {
@@ -359,12 +388,32 @@ describe('the four screens are all reachable', () => {
 
   it('every screen id in App.svelte has a real component file behind it', () => {
     const source = read('renderer/App.svelte');
-    const ids = [...source.matchAll(/id:\s*'(project|context|scene|patch)'/g)].map((m) => m[1]);
+    // Read the id union itself rather than an alternation copied here. A
+    // hand-written list of screen names is a list that stops being true the
+    // moment a screen is added — which is how the Graph screen could have been
+    // skipped by this check on its first day.
+    const union = /type ScreenId =([^;]+);/.exec(source);
+    expect(union, 'App.svelte should declare a ScreenId union').toBeTruthy();
+    const ids = [...(union?.[1] ?? '').matchAll(/'([^']+)'/g)].map((m) => m[1]);
+    expect(ids.length).toBeGreaterThanOrEqual(5);
+
     const dir = join(APP_SRC, 'renderer/screens');
     const files = readdirSync(dir);
-    for (const id of ids ?? []) {
-      const file = files.find((f) => f.toLowerCase().includes(id.toLowerCase()));
+    for (const id of ids) {
+      const file = files.find((f) => f.toLowerCase().includes(id!.toLowerCase()));
       expect(file, `no component file for the "${id}" screen`).toBeTruthy();
+    }
+  });
+
+  it('lists every declared screen in the SCREENS array, so none is unreachable', () => {
+    // The sidebar renders `SCREENS`. A screen in the `ScreenId` union but not
+    // in the array compiles fine and can never be clicked.
+    const source = read('renderer/App.svelte');
+    const union = /type ScreenId =([^;]+);/.exec(source);
+    const declared = [...(union?.[1] ?? '').matchAll(/'([^']+)'/g)].map((m) => m[1]);
+    const listed = [...source.matchAll(/\{\s*id:\s*'([^']+)'/g)].map((m) => m[1]);
+    for (const id of declared) {
+      expect(listed, `"${id}" is a ScreenId but no sidebar entry renders it`).toContain(id);
     }
   });
 });

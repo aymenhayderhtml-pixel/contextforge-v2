@@ -1121,3 +1121,85 @@ together against a real game project.
 
 ---
 
+
+---
+
+## D45. The renderer may not import core as a value, so the Graph screen's analysis runs in the main process
+
+**Context.**
+1. Step 5 asks for a file-level dependency graph, a focus mode and an orphans
+   drawer. All three need arithmetic over a `DependencyGraph`: a depth-bounded
+   walk, an edge filter, a reachability sweep. None of that needs a DOM.
+2. `vite.config.ts` lists `@contextforge/core` in `rollupOptions.external`, with a
+   comment stating the reason: "All renderer imports of @contextforge/core are
+   `import type` (erased at build time). Externalizing prevents Vite from
+   accidentally pulling in tree-sitter, node:fs, node:path — which are not
+   available in the renderer sandbox."
+3. That comment was true when written, and the Graph screen was the first thing
+   to make it false. Importing `focusNeighbourhood` as a value left a bare
+   `@contextforge/core` specifier in the bundle that the browser sandbox cannot
+   resolve, and **the entire app failed to mount** — no error, no console
+   message, an empty window. Isolating it took a bisect through the whole app:
+   the bundle was byte-identical, the build clean, and the failure reproduced
+   even with the screen's entire body stubbed out, which narrowed it to the
+   imports alone.
+4. Two extractor bugs were found on the way, and both made the graph lie rather
+   than fail. `resolveCandidates` treated an explicit extension as final, so a
+   TypeScript project's `import './kart.js'` — the specifier every TS project
+   writes, pointing at a `.ts` file — resolved to nothing and its entire import
+   graph came back empty. `resolveScriptSrc` had the same gap for a Vite
+   `index.html` loading `/src/main.js` when the file is `src/main.ts`, which
+   dropped the graph's **root** and made everything beneath it look orphaned.
+   On the real kart project, 7 of 37 files were reported unreferenced before the
+   fixes; 4 are, and the 4 are correct.
+
+**Decision.**
+1. All graph analysis lives in `packages/core/src/graph/analysis.ts` and is
+   reachable headlessly: `focusNeighbourhood`, `edgesWithin`, `findOrphans`,
+   `summariseGraph`. The renderer imports core for **types only**, and the
+   main process returns the summary, the orphan list and the neighbourhood over
+   IPC. The alternative — bundling core's analysis into the renderer — would pull
+   the Node-only parts of core across a boundary the build config exists to keep
+   them out of.
+2. `findOrphans` reports a **reason**, not just a list: `entry_point`,
+   `unreferenced`, or `unreferenced_asset`. "Orphan" invites "dead code, delete
+   it", and a game's `index.html` and `main.ts` are unreferenced by construction.
+   A drawer that flagged them without distinguishing them would be actively
+   misleading.
+3. `focusNeighbourhood` walks **both** edge directions. A developer editing
+   `kart.ts` needs the two karts that import it as much as the modules it
+   imports; a dependency-only walk answers a different question than the one
+   asked.
+4. `focusNeighbourhood` keeps the **smallest** distance when a node is reachable
+   by several paths, and `edgesWithin` drops any edge leaving the neighbourhood —
+   a line to a node that is not drawn reads as a bug in the graph.
+5. Four renderer bugs, none of which a unit test could have caught (there is no
+   jsdom in this repo), and all four of which were found only by running the app:
+   - **Cytoscape attribute selectors need quoted values.** `node[focus = true]`
+     throws at draw time and leaves the canvas empty whenever focus mode is on.
+     `screenRegressions.test.ts` now walks every attribute selector in the file.
+   - **A `$state` proxy cannot cross `ipcRenderer.invoke`.** Structured clone
+     cannot clone one, so every focus click failed with "An object could not be
+     cloned" — turned by the store into a refusal sentence on an otherwise empty
+     screen. Fixed with `$state.snapshot`; the deep copy is the honest cost.
+   - **A `$derived` read immediately after an `await` is stale.** Svelte
+     recomputes only on a flush, so `sync()` pushed the previous element set and
+     the canvas went blank on every focus change. `sync` now takes its elements
+     as arguments and cannot read a stale value.
+   - **Cytoscape's `add` is a no-op for an id already present.** The natural
+     remove-then-add element sync therefore merged with prior state: "Show all
+     files" painted 17 of 37 nodes with zero edges. `sync` builds the whole
+     element set fresh and swaps it in wholesale.
+6. A fifth, in the harness rather than the app: `process.exitCode = 1` set in a
+   `catch` was lost when `app.quit()` tore the process down, so a failed run
+   printed `FAILED` and exited **0**. It now sets the code first and quits on the
+   next tick. A screenshot harness that cannot fail is not a harness.
+7. `findOrphans` was written twice before it was right, and both wrong versions
+   failed in the direction that hides bugs. Seeding the sweep from "has no
+   dependents" reports every leaf's *dependencies* as orphans. Seeding it from
+   the same set but marking roots as reached reports nothing at all. The correct
+   version seeds from nodes with no incoming reference, sweeps **forward** along
+   dependencies, and does not mark the seeds themselves — because a root is also
+   a candidate orphan, and those are different questions.
+
+---

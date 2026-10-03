@@ -11,6 +11,7 @@
   import type { EditorStore } from './store.js';
   import Sidebar from './Sidebar.svelte';
   import ContextScreen from './screens/ContextScreen.svelte';
+  import GraphScreen from './screens/GraphScreen.svelte';
   import PatchScreen from './screens/PatchScreen.svelte';
   import ProjectScreen from './screens/ProjectScreen.svelte';
   import SceneScreen from './screens/SceneScreen.svelte';
@@ -18,11 +19,16 @@
   /** The one store. Passed in rather than imported so tests can supply a fake. */
   let { store }: { store: EditorStore } = $props();
 
-  /** The four screens. `step` is a build tag for the sidebar, not a promise. */
-  type ScreenId = 'project' | 'context' | 'scene' | 'patch';
+  /** The five screens. `step` is a build tag for the sidebar, not a promise. */
+  type ScreenId = 'project' | 'context' | 'graph' | 'scene' | 'patch';
   const SCREENS: ReadonlyArray<{ id: ScreenId; label: string; step: string }> = [
     { id: 'project', label: 'Project', step: 'working' },
     { id: 'context', label: 'Context', step: 'working' },
+    // Delivered in Step 5. It was briefly tagged with that step number, which
+    // screenRegressions.test.ts correctly rejected: a label naming a step is a
+    // claim about when it works, and the sidebar already disables the screen
+    // when there is nothing to show.
+    { id: 'graph', label: 'Graph', step: 'working' },
     { id: 'scene', label: 'Scene', step: 'working' },
     { id: 'patch', label: 'Patch', step: 'working' },
   ];
@@ -91,6 +97,8 @@
       <ProjectScreen {store} onOpenScene={() => (active = 'scene')} />
     {:else if active === 'context'}
       <ContextScreen {store} />
+    {:else if active === 'graph'}
+      <GraphScreen {store} />
     {:else if active === 'scene'}
       <SceneScreen {store} />
     {:else}

@@ -32,13 +32,13 @@
   /**
    * Whether a screen can be opened.
    *
-   * Context and Patch both read the open project — the ranker needs files on
-   * disk, and a patch needs somewhere to land — so they are gated on
-   * `projectName` rather than on a step number. They used to return `true`
-   * unconditionally here, which disabled them with the tooltip "Coming in future
-   * steps" long after both screens were built: a navigation entry that lies about
-   * what exists is worse than a missing one, because it hides working software
-   * behind a promise.
+   * Context, Graph and Patch all read the open project — the ranker needs files
+   * on disk, the graph is extracted from them, and a patch needs somewhere to
+   * land — so they are gated on `projectName` rather than on a step number. They
+   * used to return `true` unconditionally here, which disabled them with a
+   * tooltip promising a future release long after the screens were built: a
+   * navigation entry that lies about what exists is worse than a missing one,
+   * because it hides working software behind a promise.
    *
    * An explicit `disabled` on the entry still wins, so a caller can disable a
    * screen for a reason of its own.
@@ -47,7 +47,7 @@
     if (typeof screen.disabled === 'boolean') {
       return screen.disabled;
     }
-    if (screen.id === 'context' || screen.id === 'patch') {
+    if (screen.id === 'context' || screen.id === 'graph' || screen.id === 'patch') {
       return projectName === null;
     }
     return false;

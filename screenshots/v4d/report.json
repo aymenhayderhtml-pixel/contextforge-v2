@@ -1,95 +1,95 @@
 {
-  "project": "<project-path>",
+  "project": "/home/aymen/Documents/dark matter/kart-dash-3d-v2",
   "screenshots": [
     {
       "name": "00-problems-panel.png",
-      "path": "<local-path>/contextforge 2/screenshots/v4d/00-problems-panel.png",
-      "bytes": 331142
+      "path": "/home/aymen/Documents/dark matter/contextforge 2/screenshots/v4d/00-problems-panel.png",
+      "bytes": 345836
     },
     {
       "name": "00b-inspector-rotation-fields.png",
-      "path": "<local-path>/contextforge 2/screenshots/v4d/00b-inspector-rotation-fields.png",
-      "bytes": 368975
+      "path": "/home/aymen/Documents/dark matter/contextforge 2/screenshots/v4d/00b-inspector-rotation-fields.png",
+      "bytes": 383327
     },
     {
       "name": "00-toasts-demo.png",
-      "path": "<local-path>/contextforge 2/screenshots/v4d/00-toasts-demo.png",
-      "bytes": 388872
+      "path": "/home/aymen/Documents/dark matter/contextforge 2/screenshots/v4d/00-toasts-demo.png",
+      "bytes": 403930
     },
     {
       "name": "00-toasts-details-expanded.png",
-      "path": "<local-path>/contextforge 2/screenshots/v4d/00-toasts-details-expanded.png",
-      "bytes": 407369
+      "path": "/home/aymen/Documents/dark matter/contextforge 2/screenshots/v4d/00-toasts-details-expanded.png",
+      "bytes": 410233
     },
     {
       "name": "01-context-collapsible-panels.png",
-      "path": "<local-path>/contextforge 2/screenshots/v4d/01-context-collapsible-panels.png",
-      "bytes": 128461
+      "path": "/home/aymen/Documents/dark matter/contextforge 2/screenshots/v4d/01-context-collapsible-panels.png",
+      "bytes": 130621
     },
     {
       "name": "01b-context-panel-collapsed.png",
-      "path": "<local-path>/contextforge 2/screenshots/v4d/01b-context-panel-collapsed.png",
-      "bytes": 133630
+      "path": "/home/aymen/Documents/dark matter/contextforge 2/screenshots/v4d/01b-context-panel-collapsed.png",
+      "bytes": 135738
     },
     {
       "name": "02-context-compiled.png",
-      "path": "<local-path>/contextforge 2/screenshots/v4d/02-context-compiled.png",
-      "bytes": 180172
+      "path": "/home/aymen/Documents/dark matter/contextforge 2/screenshots/v4d/02-context-compiled.png",
+      "bytes": 182216
     },
     {
       "name": "02b-context-ranked-and-tokens.png",
-      "path": "<local-path>/contextforge 2/screenshots/v4d/02b-context-ranked-and-tokens.png",
-      "bytes": 234139
+      "path": "/home/aymen/Documents/dark matter/contextforge 2/screenshots/v4d/02b-context-ranked-and-tokens.png",
+      "bytes": 236250
     },
     {
       "name": "02c-context-sticky-copy-bar.png",
-      "path": "<local-path>/contextforge 2/screenshots/v4d/02c-context-sticky-copy-bar.png",
-      "bytes": 174228
+      "path": "/home/aymen/Documents/dark matter/contextforge 2/screenshots/v4d/02c-context-sticky-copy-bar.png",
+      "bytes": 176382
     },
     {
       "name": "03-context-insufficient-file.png",
-      "path": "<local-path>/contextforge 2/screenshots/v4d/03-context-insufficient-file.png",
-      "bytes": 180196
+      "path": "/home/aymen/Documents/dark matter/contextforge 2/screenshots/v4d/03-context-insufficient-file.png",
+      "bytes": 182268
     },
     {
       "name": "03b-context-insufficient-detail.png",
-      "path": "<local-path>/contextforge 2/screenshots/v4d/03b-context-insufficient-detail.png",
-      "bytes": 157825
+      "path": "/home/aymen/Documents/dark matter/contextforge 2/screenshots/v4d/03b-context-insufficient-detail.png",
+      "bytes": 159736
     },
     {
       "name": "04-patch-resting.png",
-      "path": "<local-path>/contextforge 2/screenshots/v4d/04-patch-resting.png",
-      "bytes": 116477
+      "path": "/home/aymen/Documents/dark matter/contextforge 2/screenshots/v4d/04-patch-resting.png",
+      "bytes": 118564
     },
     {
       "name": "05-patch-error-missing-anchor.png",
-      "path": "<local-path>/contextforge 2/screenshots/v4d/05-patch-error-missing-anchor.png",
-      "bytes": 136471
+      "path": "/home/aymen/Documents/dark matter/contextforge 2/screenshots/v4d/05-patch-error-missing-anchor.png",
+      "bytes": 138497
     },
     {
       "name": "05b-patch-error-reason.png",
-      "path": "<local-path>/contextforge 2/screenshots/v4d/05b-patch-error-reason.png",
-      "bytes": 114330
+      "path": "/home/aymen/Documents/dark matter/contextforge 2/screenshots/v4d/05b-patch-error-reason.png",
+      "bytes": 116510
     },
     {
       "name": "06-patch-error-syntax.png",
-      "path": "<local-path>/contextforge 2/screenshots/v4d/06-patch-error-syntax.png",
-      "bytes": 128123
+      "path": "/home/aymen/Documents/dark matter/contextforge 2/screenshots/v4d/06-patch-error-syntax.png",
+      "bytes": 130156
     },
     {
       "name": "06b-patch-syntax-reason.png",
-      "path": "<local-path>/contextforge 2/screenshots/v4d/06b-patch-syntax-reason.png",
-      "bytes": 106621
+      "path": "/home/aymen/Documents/dark matter/contextforge 2/screenshots/v4d/06b-patch-syntax-reason.png",
+      "bytes": 108660
     },
     {
       "name": "07-patch-preview-clean.png",
-      "path": "<local-path>/contextforge 2/screenshots/v4d/07-patch-preview-clean.png",
-      "bytes": 139303
+      "path": "/home/aymen/Documents/dark matter/contextforge 2/screenshots/v4d/07-patch-preview-clean.png",
+      "bytes": 141344
     },
     {
       "name": "07b-patch-diff.png",
-      "path": "<local-path>/contextforge 2/screenshots/v4d/07b-patch-diff.png",
-      "bytes": 116807
+      "path": "/home/aymen/Documents/dark matter/contextforge 2/screenshots/v4d/07b-patch-diff.png",
+      "bytes": 118965
     }
   ],
   "consoleErrors": []

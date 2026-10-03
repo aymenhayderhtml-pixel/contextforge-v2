@@ -190,6 +190,18 @@ function readAttribute(tag: string, name: string): string | null {
  * Remote and protocol-relative URLs are rejected: they are not project files.
  * A root-relative `/src/main.js` is resolved against the project root, and a
  * document-relative one against the HTML file's own directory.
+ *
+ * **A `.js`/`.mjs` src that is not on disk also tries its TypeScript source.**
+ * A Vite project's `index.html` loads `/src/main.js`, and the file it means is
+ * `src/main.ts` — the browser path is the *built* name and the source is the
+ * `.ts`. Requiring the literal path to exist here drops every TypeScript
+ * project's real entrypoint, which then looks like an unreferenced file and
+ * hides everything beneath it from the graph.
+ *
+ * The caller decides whether the returned id is a node in the graph; this
+ * function only resolves a path. Returning an id that is not a node is
+ * harmless — the caller drops it — whereas dropping one that is loses the
+ * graph's root.
  */
 export function resolveScriptSrc(
   src: string,
@@ -205,6 +217,15 @@ export function resolveScriptSrc(
     ? join(projectRoot, trimmed)
     : resolve(dirname(htmlAbsolutePath), trimmed);
 
-  if (!existsSync(absolute)) return null;
-  return toPosixPath(absolute.slice(projectRoot.length + 1));
+  const direct = toPosixPath(absolute.slice(projectRoot.length + 1));
+  if (existsSync(absolute)) return direct;
+
+  if (/\.(?:js|mjs|cjs|jsx)$/.test(direct)) {
+    const stem = direct.replace(/\.(?:js|mjs|cjs|jsx)$/, '');
+    for (const extension of ['.ts', '.tsx', '.mts', '.cts']) {
+      if (existsSync(join(projectRoot, `${stem}${extension}`))) return `${stem}${extension}`;
+    }
+  }
+
+  return null;
 }
