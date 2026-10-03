@@ -249,9 +249,86 @@ the session). Harness exits 0 with **zero console errors**.
 
 ## Phase 5d — New Project flow
 
-**Status:** pending
+**Status:** DONE
+**Window:** 22:45 → 23:50 (~1h05m)
+**Commit:** `feat: 3-step New Project flow, gated on a real game idea`
 
-_Not yet written._
+### Done
+
+A **New project…** flow on the Project screen, three steps:
+
+1. **Name it** — project name + the parent folder, chosen with the **Electron
+   folder dialog** (`pickFolder`, the same channel Open uses).
+2. **Describe the game** — the idea, in the developer's own words.
+3. **Take the prompt** — the built prompt, with a Copy button.
+
+**The rule: the scaffold prompt cannot be copied until the idea is filled in.**
+Implemented as `canCopy = name !== '' && idea !== '' && scaffoldProblems.length === 0`,
+where `scaffoldProblems` is **core's own `checkBrief`**, fetched over IPC.
+
+That reuse is the substantive decision. `checkBrief` was exported from
+`template.ts` with the note *"so the UI can show the same list the CLI would,
+instead of reimplementing the rules and drifting from them"* — and
+`generateProject` throws on exactly these problems. A screen that checked
+differently would enable a copy button producing a prompt the generator
+refuses, and the developer would find out only after pasting it. One rule, one
+function, two call sites.
+
+The prompt itself (`core/src/scene/scaffoldPrompt.ts`) embeds the idea **verbatim**
+under "The game", states the `scene.json` contract, and lists **every prefab rule
+by id**, read from `PREFAB_RULES` — so a rule added to the linter appears in the
+prompt automatically instead of drifting from it.
+
+### Proven by test
+
+- `packages/core/test/scene/scaffoldPrompt.test.ts` — **15 tests**. The gate
+  blocks an empty idea, a whitespace-only idea, a placeholder (`"TODO"`, and the
+  message says *placeholder* rather than *too short*), and a short idea; allows a
+  filled one. One test asserts `scaffoldPromptProblems` **is** `checkBrief` across
+  six briefs, which is what stops the two implementations from diverging. The
+  prompt is asserted byte-identical across runs, and asserted to name every
+  prefab rule the linter enforces.
+- `packages/app/test/shell/newProject.test.ts` — **15 tests**. Both channels
+  (refuse on an incomplete brief; answer rather than refuse on the problems
+  channel); both are registered, because `registerHandlers` throws at startup
+  otherwise; and structural guards that `canCopy` reads `scaffoldProblems`, that
+  the button's `disabled` is bound to `canCopy`, and that `goTo(3)` appears
+  nowhere — step 3 is only reachable through `toPrompt`, which itself refuses.
+
+### Proven by screenshot
+
+Two in `screenshots/v05/` (budget: 2 of 6 used, 5 of 6 for the session):
+
+- `newproject-02-gate-empty-idea.png` — **the gate held**. Step 2 with a name but
+  no idea: core's refusal sentence is on screen ("`idea` is required — one or
+  two sentences on what the game is and what the player does") and **no prompt
+  exists**. Clicking *Build the prompt* did not produce one and did not advance.
+- `newproject-04-step3-prompt-ready.png` — **the gate opened**. 3,091 characters,
+  the idea embedded verbatim, the Copy button enabled.
+
+The harness also proves the gate **closes again**: clearing the idea after the
+prompt was built reports the problem once more. `consoleErrors: 0`.
+
+### Not proven
+
+- **The clipboard itself.** `navigator.clipboard.writeText` is called, and the
+  button is asserted enabled, but no test stubs the clipboard — there is no
+  jsdom in this repo and none of the two existing clipboard call sites
+  (`ContextScreen`) has a test either. The click-to-clipboard path is unproven.
+- **No project was actually generated.** Step 1 picks a *parent* folder; the
+  flow does not call `generateProject` or write a folder. `pickFolder` is
+  deliberately restricted to `showOpenDialog` so the main process stays drivable
+  headlessly, and a native create-folder dialog would need new wiring at nine
+  enumerated points. The flow's last step is the prompt, not the creation.
+
+### Verification
+
+`npm run verify` green: **64 files, 1235 tests**.
+
+### Decision
+
+**D46** — the gate is core's `checkBrief` over IPC, and the flow stops at the
+prompt.
 
 ---
 

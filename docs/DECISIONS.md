@@ -1203,3 +1203,50 @@ together against a real game project.
    a candidate orphan, and those are different questions.
 
 ---
+
+---
+
+## D46. The New Project gate is core's `checkBrief` over IPC, and the flow stops at the prompt
+
+**Context.**
+1. Step 5d asks for a three-step New Project flow where the scaffold prompt
+   cannot be copied until the game idea is filled in.
+2. `checkBrief` already exists in `core/src/scene/template.ts:88`, exported with
+   the note *"so the UI (Step 4) can show the same list the CLI would, instead of
+   reimplementing the rules and drifting from them."* It enforces: a non-empty
+   `name` matching a plain-folder-name pattern; a non-empty `idea`; that the idea
+   is not one of ten placeholder strings; and that it is at least 20 characters.
+   `generateProject` throws `IncompleteBriefError` on exactly these.
+3. The renderer cannot import core as a value (D45), so the rule cannot be called
+   in the Project screen directly.
+
+**Decision.**
+1. The gate is `checkBrief`, asked over a new `project:scaffold-problems`
+   channel. `canCopy` is `name !== '' && idea !== '' && scaffoldProblems.length === 0`
+   — the emptiness checks are not redundant with `checkBrief`, they cover the
+   window before the first fetch resolves, so the button is never briefly enabled
+   while the real answer is in flight. It also **fails closed**: if the fetch
+   refuses, the reason becomes the problem list and the button stays disabled.
+2. Two channels, not one. `project:scaffold-prompt` **refuses** an incomplete
+   brief with `IncompleteBriefError`'s own sentence; `project:scaffold-problems`
+   **answers** with the list. "Incomplete" is the expected answer on the second
+   channel, so a refusal there would be a second way of saying the same thing and
+   the screen would have to handle both shapes.
+3. The prompt builder (`buildScaffoldPrompt`) is a **pure** function, separate
+   from any writer, so a screen can preview before committing — the same split
+   `buildBriefMarkdown` / `generateBrief` makes.
+4. The prompt lists prefab rules **read from `PREFAB_RULES`** rather than written
+   out in prose. A rule added to the linter and not to the prompt would let an AI
+   break it, with the linter the only thing saying so.
+5. **The flow stops at the prompt.** It does not call `generateProject` or write a
+   folder. Step 1 picks a *parent* with `pickFolder`, which is deliberately
+   restricted to `showOpenDialog` so the main process stays drivable headlessly
+   (`pickFolder.test.ts` asserts both that exact options object and that
+   `ipcHandlers.ts` imports no Electron). A native create-folder dialog needs new
+   wiring at nine enumerated points and would weaken that isolation. Creating the
+   project is a separate decision, and this phase did not make it.
+6. Two things are **not** proven and are logged as such: the clipboard write
+   itself (no jsdom, and neither existing clipboard call site has a test), and
+   the flow's behaviour once a project is actually generated.
+
+---

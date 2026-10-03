@@ -50,6 +50,7 @@ import {
   applyEditBlocks,
   applySceneEdit,
   buildManifest,
+  buildScaffoldPrompt,
   captureAndWrite,
   compileContext,
   emptyScene,
@@ -71,6 +72,7 @@ import {
   redoSceneEdit,
   rankRelevantFiles,
   saveScene,
+  scaffoldPromptProblems,
   sceneHistoryStatus,
   summariseGraph,
   undoSceneEdit,
@@ -83,6 +85,7 @@ import {
   type DependencyGraph,
   type FocusDepth,
   type FocusedNode,
+  type GameBrief,
   type GraphEdge,
   type GraphNode,
   type GraphSummary,
@@ -769,6 +772,8 @@ interface Requests {
   [CHANNELS.rankFiles]: { issue: string; logs: string };
   [CHANNELS.projectGraph]: Record<string, never>;
   [CHANNELS.projectFocus]: { id: string; depth: FocusDepth; graph: DependencyGraph };
+  [CHANNELS.scaffoldPrompt]: Partial<GameBrief>;
+  [CHANNELS.scaffoldProblems]: Partial<GameBrief>;
   [CHANNELS.previewPatch]: { text: string };
   [CHANNELS.applyPatch]: { text: string; applyAnyway?: boolean };
   [CHANNELS.patchHistory]: Record<string, never>;
@@ -1554,6 +1559,43 @@ export class AppBackend {
   }
 
   /**
+   * The scaffold prompt for a new project.
+   *
+   * Refuses an incomplete brief rather than returning a half-built prompt. The
+   * refusal is `IncompleteBriefError`'s own sentence, the same one
+   * `generateProject` throws with — so a developer who reads it here and a
+   * developer who reads it from the generator are told the same thing.
+   */
+  scaffoldPrompt(request: Requests[typeof CHANNELS.scaffoldPrompt]): Result<{ prompt: string }> {
+    const problems = scaffoldPromptProblems(request);
+    if (problems.length > 0) {
+      return fail(
+        `Cannot build the scaffold prompt — the game brief is incomplete:\n` +
+          problems.map((p) => `  - ${p}`).join('\n') +
+          '\n\nA prompt generated from a half-filled brief teaches an AI nothing about\n' +
+          'what the game is. Fill these in first.',
+      );
+    }
+    return ok({ prompt: buildScaffoldPrompt(request) });
+  }
+
+  /**
+   * Why a brief cannot be used yet.
+   *
+   * Never refuses for a bad brief — "incomplete" is the expected answer here,
+   * and a refusal would be a second way of saying the same thing. It does
+   * refuse a request it cannot understand, which is a different failure.
+   */
+  scaffoldProblems(
+    request: Requests[typeof CHANNELS.scaffoldProblems],
+  ): Result<{ problems: string[] }> {
+    if (request === null || typeof request !== 'object') {
+      return fail('Expected a brief with a name and an idea.');
+    }
+    return ok({ problems: scaffoldPromptProblems(request) });
+  }
+
+  /**
    * Start (or restart) the prefab loader for the open project.
    *
    * The loader loads the registry once and then watches for changes itself, so
@@ -1867,6 +1909,16 @@ const HANDLERS: ReadonlyArray<(backend: AppBackend) => ChannelBinding> = [
     CHANNELS.projectFocus,
     (request: Requests[typeof CHANNELS.projectFocus]) =>
       Promise.resolve(backend.projectFocus(request)),
+  ],
+  (backend) => [
+    CHANNELS.scaffoldPrompt,
+    (request: Requests[typeof CHANNELS.scaffoldPrompt]) =>
+      Promise.resolve(backend.scaffoldPrompt(request)),
+  ],
+  (backend) => [
+    CHANNELS.scaffoldProblems,
+    (request: Requests[typeof CHANNELS.scaffoldProblems]) =>
+      Promise.resolve(backend.scaffoldProblems(request)),
   ],
   (backend) => [
     CHANNELS.previewPatch,

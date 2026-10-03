@@ -1,0 +1,25 @@
+{
+  "steps": [
+    "1 Name it",
+    "2 Describe the game",
+    "3 Take the prompt"
+  ],
+  "promptLength": 3091,
+  "gateHeldOnEmptyIdea": true,
+  "gateOpenedOnFilledIdea": true,
+  "gateClosedAgainOnClearing": true,
+  "problemsWhenCleared": [
+    "`idea` is required — one or two sentences on what the game is and what the player does"
+  ],
+  "screenshots": [
+    {
+      "name": "newproject-02-gate-empty-idea.png",
+      "bytes": 145581
+    },
+    {
+      "name": "newproject-04-step3-prompt-ready.png",
+      "bytes": 207790
+    }
+  ],
+  "consoleErrors": []
+}

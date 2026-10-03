@@ -41,6 +41,7 @@ import type {
   DependencyGraph,
   FocusDepth,
   FocusedNode,
+  GameBrief,
   GraphEdge,
   GraphNode,
   GraphSummary,
@@ -259,6 +260,24 @@ export const CHANNELS = {
    * renderer sends the graph it was given straight back and core does the work.
    */
   projectFocus: 'graph:focus',
+
+  // ── New Project (Step 5d) ────────────────────────────────────────────────
+  /**
+   * The scaffold prompt for a new project.
+   *
+   * Built in the main process because it is core's `buildScaffoldPrompt`, and the
+   * renderer cannot import core as a value (D45).
+   */
+  scaffoldPrompt: 'project:scaffold-prompt',
+
+  /**
+   * Why a brief cannot be used yet — core's `checkBrief`, unaltered.
+   *
+   * Separate from the prompt channel so the screen can ask "may I copy this?"
+   * without building a prompt it is not allowed to use. One rule, two call
+   * sites, and they cannot disagree because they are the same function.
+   */
+  scaffoldProblems: 'project:scaffold-problems',
 
   // ── Brief (Step 4) ──────────────────────────────────────────────────────
   /** Build `brief.md` and write it under `.contextforge/`. */
@@ -679,6 +698,31 @@ export interface IpcRequests {
       nodes: FocusedNode[];
       edges: { from: string; to: string; kind: string }[];
     }>;
+  };
+
+  // ── New Project ──────────────────────────────────────────────────────────
+
+  /**
+   * The prompt, or a refusal naming what is missing.
+   *
+   * It refuses rather than returning a half-built prompt: a prompt generated
+   * from an incomplete brief teaches an AI nothing about what the game is, and
+   * the developer only finds out after the AI has built the wrong game in it.
+   * That is the same sentence `generateProject` throws with.
+   */
+  [CHANNELS.scaffoldPrompt]: {
+    request: Partial<GameBrief>;
+    response: Result<{ prompt: string }>;
+  };
+
+  /**
+   * The reasons, as a list. This one does not refuse on a bad brief — "bad" is
+   * the expected answer here, and a refusal would be a second way of saying the
+   * same thing.
+   */
+  [CHANNELS.scaffoldProblems]: {
+    request: Partial<GameBrief>;
+    response: Result<{ problems: string[] }>;
   };
 
   // ── Brief ───────────────────────────────────────────────────────────────

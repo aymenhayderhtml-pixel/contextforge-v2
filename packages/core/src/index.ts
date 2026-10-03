@@ -270,6 +270,11 @@ export {
 } from './scene/template.js';
 
 export {
+  buildScaffoldPrompt,
+  scaffoldPromptProblems,
+} from './scene/scaffoldPrompt.js';
+
+export {
   validateModelSlot,
   makeSlotValidator,
   instanceSlotValidator,
