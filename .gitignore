@@ -1,0 +1,90 @@
+# ── Dependencies ─────────────────────────────────────────────────────────────
+node_modules/
+
+# ── Build output ─────────────────────────────────────────────────────────────
+# Root-level and per-package dist/, including the Electron main-process build
+# (packages/app/dist/electron) and the Vite renderer bundle
+# (packages/app/dist/renderer).
+dist/
+packages/*/dist/
+*.tsbuildinfo
+*.tsbuildinfo.*
+
+# ── ContextForge's own runtime state ─────────────────────────────────────────
+# Written next to the project an editor session has open: opened-project
+# markers, watcher state, caches.
+.contextforge/
+
+# ── Scratch fixtures some suites create inside the repo ──────────────────────
+# The generated projects must sit here, not in the OS temp dir, because they
+# import `three` and `@contextforge/core` and Node's resolution only walks up
+# from the real path.
+.e2e-work-*/
+.e2e-brief-*/
+
+# ── Logs ─────────────────────────────────────────────────────────────────────
+*.log
+npm-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+out.log
+logs/
+
+# ── Test / coverage output ───────────────────────────────────────────────────
+coverage/
+.nyc_output/
+*.lcov
+
+# ── OS files ─────────────────────────────────────────────────────────────────
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# ── Editor / IDE cruft ───────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ── Local agent tooling ──────────────────────────────────────────────────────
+# Per-developer agent settings and taste notes. `.commandcode/settings.json`
+# contains absolute paths and shell allowlists specific to one machine, so it is
+# not part of the published repository. The taste notes are personal notes.
+.commandcode/
+
+# ── Local environment / secrets ──────────────────────────────────────────────
+# Nothing in this repo needs a secret: it makes no network calls and reads no
+# credentials. These are here so that if that ever changes, the mistake is not
+# also a published secret.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+credentials.json
+secrets.json
+
+# ── Electron / native-module leftovers ───────────────────────────────────────
+# `npm run check:native` rebuilds native tree-sitter modules in place; a
+# half-finished rebuild leaves these behind.
+packages/*/build/
+prebuilds/
+*.node.bak
+
+# ── Misc ─────────────────────────────────────────────────────────────────────
+.cache/
+tmp/
+*.local
+
+# ── Stray capture output ─────────────────────────────────────────────────────
+# `packages/screenshots/v3d/report.json` is an unreferenced leftover from a
+# 3D capture run: nothing in the source, the scripts or the docs refers to it,
+# and it records the absolute path of the machine that produced it. Kept on disk,
+# not published.
+packages/screenshots/
