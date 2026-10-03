@@ -37,7 +37,29 @@ network calls of its own.
 ## What it does
 
 Every claim below is backed by a test in `packages/*/test/`. `npm run verify`
-runs all of them: **59 test files, 1157 tests, green.**
+runs all of them: **65 test files, 1258 tests, green.**
+
+### Sees the whole project at once
+
+The **Graph** screen draws the file-level dependency graph the extractors
+produced, straight from your project on disk. Click any file to narrow to its
+neighbourhood — depth 1 or 2, in both directions, because a developer editing
+`kart.ts` needs the two karts that import it as much as the modules it imports.
+
+The **Unreferenced** drawer lists files nothing imports, and — the part that
+matters — says *why* each one is flagged. An entry point (`index.html`,
+`main.ts`) is unreferenced by construction and is **not** dead code; a file with
+no references at all might be.
+
+![Graph screen: the whole project, 37 files and 46 edges](docs/images/graph-dependency-graph.png)
+
+![Graph screen: one file's neighbourhood, with the depth selector and a way back](docs/images/graph-focus-depth1.png)
+
+![Graph screen: the unreferenced drawer, each file with its reason](docs/images/graph-unreferenced-drawer.png)
+
+*Checked by:* `packages/core/test/graph/analysis.test.ts` (23),
+`packages/core/test/scene/hardening.test.ts` (23),
+`packages/app/test/shell/projectGraph.test.ts` (11).
 
 ### Reads your project into a dependency graph
 
@@ -167,6 +189,33 @@ included and what was not, so you can see what the AI was actually given.
 *Checked by:* `packages/core/test/context/brief.test.ts`,
 `packages/app/test/context/handlers.test.ts`, `packages/app/test/e2e/briefLoop.test.ts`.
 
+### Starts a new project from a description
+
+**Project → New project…** walks three steps: name it and choose the folder with
+the OS dialog, describe the game, take the prompt.
+
+**The prompt cannot be copied until the idea is filled in** — and that gate is
+core's own `checkBrief`, the same function `generateProject` refuses on. Not a
+reimplementation: a screen that checked differently would enable a copy button
+producing a prompt the generator rejects, and the developer would find out only
+after pasting it. An empty idea, a whitespace-only one, `"TODO"`, or three words
+are each refused with a sentence saying which.
+
+The prompt embeds your description **verbatim**, and states the prefab rules
+read from the linter's own rule list — so a rule added to `npm run lint:prefabs`
+appears in the prompt instead of quietly drifting from it.
+
+![New Project: the gate closed, with core's own reason on screen](docs/images/newproject-gate-closed.png)
+
+![New Project: the prompt, with the description embedded verbatim](docs/images/newproject-prompt-ready.png)
+
+*Checked by:* `packages/core/test/scene/scaffoldPrompt.test.ts` (15),
+`packages/app/test/shell/newProject.test.ts` (15).
+
+*Not yet:* this flow stops at the prompt. It does not create the folder — a
+native create-folder dialog would need new main-process wiring that would break
+the isolation `pickFolder.test.ts` enforces.
+
 ### Gates that fail when the rule is broken
 
 These are not comments, they are `npm run verify` stages:
@@ -202,55 +251,68 @@ than fail.
 
 | | |
 | --- | --- |
-| ![Context: ranked files with reasons, sticky copy bar, token saving](docs/images/context-ranked-files.png) | ![Context: a brief mode selector with the sticky copy bar](docs/images/context-copy-bar.png) |
+| ![Graph: the whole project, 37 files and 46 edges](docs/images/graph-dependency-graph.png) | ![Graph: one file's neighbourhood, depth 1](docs/images/graph-focus-depth1.png) |
+| ![Graph: the unreferenced drawer, each with its reason](docs/images/graph-unreferenced-drawer.png) | ![New Project: the gate closed on an empty idea](docs/images/newproject-gate-closed.png) |
+| ![New Project: the prompt, description embedded verbatim](docs/images/newproject-prompt-ready.png) | ![Context: ranked files, each with a reason](docs/images/context-ranked-files.png) |
 | ![Scene: Problems panel naming each failure](docs/images/problems-panel.png) | ![Scene: Inspector with three transform axes](docs/images/inspector-three-axes.png) |
 | ![Patch: single block previewed](docs/images/patch-preview.png) | ![Patch: unresolvable block, nothing written](docs/images/patch-error-reason.png) |
 | ![Patch: two files applied, named in the report](docs/images/patch-applied-names-files.png) | ![Patch: diff for two new files](docs/images/patch-diff-new-files.png) |
 
-*All screenshots are from the real app running against the `kart-dash-3d-v2`
-project. Two of them had a personal absolute path visible in the error text; it
-was replaced with a neutral placeholder by `scripts/redact-screenshots.py`.*
+*Every screenshot is from the **real app** driving the real renderer bundle and
+the real main process against the real `kart-dash-3d-v2` project — not a mock,
+because a mock would prove the CSS renders, which was never in question. Each one
+is captured by a harness that **throws rather than photograph a state it cannot
+confirm**: `capture-graph.mjs` asserts the node counts it claims to show, and
+`capture-newproject.mjs` asserts that no prompt exists while the idea is empty.*
+
+*Two of them had a personal absolute path in the error text; it was replaced
+with a neutral placeholder by `scripts/redact-screenshots.py`.*
 
 ---
 
 ## Install
 
-Requires **Node ≥ 22**. No other prerequisites.
+Requires **Node ≥ 22**. No other prerequisites — the tree-sitter grammars ship
+prebuilt binaries, so nothing compiles from source.
+
+**Full setup, including every flag and a troubleshooting section:
+[docs/RUNNING.md](docs/RUNNING.md).**
 
 ```bash
-npm install --legacy-peer-deps
+npm ci
 ```
 
-> **Why `--legacy-peer-deps`:** `tree-sitter-typescript@0.23.2` and
-> `tree-sitter-gdscript@6.1.0` still declare peer dependencies on
-> `tree-sitter@^0.21`, while this project installs `0.25`.
+> **On `--legacy-peer-deps`.** A `postinstall` note in `package.json` suggests
+> it. **You do not need it** — `npm ci` and `npm install` both exit 0, because
+> `package-lock.json` is v3 and already records a valid tree, so npm never
+> re-checks the peer ranges. The flag matters in exactly one case: if you *delete*
+> the lockfile, npm then resolves `tree-sitter@0.21.1` at the root beside a
+> nested `0.25.1` in `packages/core`, and the grammar tests break. Keep the
+> lockfile.
 >
-> **In practice a plain `npm install` and `npm ci` both succeed** — `package-lock.json`
-> is lockfile v3 and already records a valid tree, so npm never re-checks the peer
-> ranges. The unsatisfied declarations are reported by `npm ls tree-sitter` as
-> `invalid` but do not fail the install. The flag is kept here because deleting the
-> lockfile *does* make npm resolve `tree-sitter@0.21.1` at the root alongside a
-> nested `0.25.1` in `packages/core`, which is the conflict the flag exists to avoid.
-> `package.json` attributes the note to "D17", but `docs/DECISIONS.md` has no D17
-> entry — its numbering jumps from D16 to D20. The reasoning is in
-> [docs/DEPENDENCIES.md](docs/DEPENDENCIES.md).
+> `npm ls tree-sitter` reports the grammars as `invalid` and exits 1
+> (`ELSPROBLEMS`). That is the unsatisfied peer range, not a broken install.
+>
+> (`package.json` attributes its note to "D17", but `docs/DECISIONS.md` has no
+> D17 entry — the numbering jumps from D16 to D20. See
+> [docs/DEPENDENCIES.md](docs/DEPENDENCIES.md).)
 
-> **If `npm install` skipped devDependencies,** you have `NODE_ENV=production` set.
-> Install with `NODE_ENV=development npm install --include=dev` — Electron is a
+> **If `npm ci` skipped devDependencies,** you have `NODE_ENV=production` set.
+> Install with `NODE_ENV=development npm ci --include=dev` — Electron is a
 > devDependency and will otherwise be missing.
 
 ### Electron needs one extra step
 
-**`npm install` does not download the Electron binary.** `electron@44` ships no
-postinstall script that fetches it, so after a fresh clone you must fetch it
-once:
+**`npm ci` does not download the Electron binary.** `electron@44` declares no
+postinstall script at all, so npm never fetches the binary and any Electron
+command fails with a missing-binary error. Fetch it once:
 
 ```bash
 node node_modules/electron/install.js
 ```
 
-If that prints something unexpected, `npx electron --version` will fetch it too.
-Until you do this, any Electron command fails with a missing-binary error.
+(`npx electron --version` downloads on first call instead, but running the
+script directly is clearer about what you are doing.)
 
 ## Run
 
@@ -297,7 +359,7 @@ npm run typecheck   # tsc --build
 4. **`lint:prefabs`** — prefab purity rules.
 5. **`test`** — Vitest across `packages/*/test/`.
 
-Current result: **59 files, 1157 tests, exit 0.**
+Current result: **65 files, 1258 tests, exit 0.**
 
 ---
 
@@ -408,6 +470,7 @@ Pinned versions read from `package-lock.json`:
 | `tree-sitter-gdscript` | 6.1.0 | GDScript grammar |
 | `esbuild` | 0.25.12 | bundles a project's real prefabs |
 | `@electron/rebuild` | 4.2.0 | rebuilds native grammars for Electron |
+| `cytoscape` | 3.34.3 | draws the Graph screen |
 
 Licences and the reasoning behind each choice: [docs/DEPENDENCIES.md](docs/DEPENDENCIES.md).
 
@@ -424,35 +487,51 @@ before the next began.
 | 2 — Scene contract: `scene.json` schema, load/save, prefab lint | **done** |
 | 3 — Modeling viewer: `scene.json` rendered with no game running | **done** |
 | 4 — UI shell: Electron + Svelte, four screens | **done** |
-| 5 — Project Brief button | **partly done** — both modes build and write; ask-back still owed |
+| 5a — Graph screen: the dependency graph, drawn | **done** |
+| 5b — Focus mode: one file's neighbourhood, depth 1 or 2 | **done** |
+| 5c — Orphans drawer: unreferenced files, with reasons | **done** — attach-to-context records the selection; it does not yet feed a compiled prompt |
+| 5d — New Project: 3 steps, gated on a real idea | **done** — stops at the prompt; does not create the folder |
+| 5e — Hardening: empty, 1,000-file, broken folders | **done** |
+| 5f — Brief ask-back mode | **not started** |
 | 6+ | not planned |
 
-### Step 5, specifically
+### What Step 5f still owes
 
-A **Project Brief button** in the UI, in two modes.
-
-**What already works today** (Step 4b): the Context screen builds a brief in both
-modes, writes `.contextforge/brief.md`, reads it back, and detects `NEED: <path>`
-so a requested file is attached in full on the next turn. The e2e brief loop
-drives this against a real project.
-
-**What Step 5 still owes**, per `SPEC.md §5`:
+A **Project Brief** button in two modes. Both modes already build and write
+`.contextforge/brief.md`, read it back, and detect `NEED: <path>` so a requested
+file is attached in full on the next turn — covered by the e2e brief loop against
+a real project.
 
 - One-shot produces a brief from core's graph with **no network call** — true
-  today, and covered by the e2e loop.
-- The ask-back mode asks exactly one clarifying question before generating a
+  today.
+- The **ask-back** mode asks exactly one clarifying question before generating a
   different brief. The current second mode is **interactive** (the AI asks for
   missing files), which is *not* the same thing: it defers the question to the
   AI instead of asking one itself. This is the substantive gap.
-- Neither mode writes to the project without an explicit apply. `brief.md` is
-  written under `.contextforge/` and nothing else is touched, but the guarantee
-  is not yet asserted end to end.
+- Neither mode writes to the project without an explicit apply. `brief.md` goes
+  under `.contextforge/` and nothing else is touched, but the guarantee is not yet
+  asserted end to end.
 
-Nothing beyond Step 5 is committed to.
+Nothing beyond Step 5f is committed to.
+
+### Known limits, stated plainly
+
+- **Attach to context** records which files you ticked; it does not yet put them
+  into a compiled prompt.
+- **New Project** produces a prompt, not a folder.
+- **`findCycles` is super-linear** — 33× for a 10× input, because each detected
+  cycle is canonicalised by sorting its node list. 11 ms at 1,000 files. Logged
+  in [D47](docs/DECISIONS.md), not fixed.
+- **The clipboard write is untested.** There is no jsdom in this repo, so the
+  copy buttons are covered at the level of "is it enabled", not "did the bytes
+  land".
+- The Electron e2e loops are skipped by default and say so in their output
+  rather than passing silently.
 
 Step boundaries and their done-when tests: [SPEC.md §5](SPEC.md). The reasons
-behind each choice, including the known gaps that were accepted on purpose, are
-in [docs/DECISIONS.md](docs/DECISIONS.md) (D1–D43).
+behind each choice, including the gaps accepted on purpose, are in
+[docs/DECISIONS.md](docs/DECISIONS.md) (D1–D47). What was built in Step 5 and
+what was proven: [docs/OVERNIGHT.md](docs/OVERNIGHT.md).
 
 ---
 

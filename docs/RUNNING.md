@@ -4,6 +4,11 @@ Every command below was executed on this machine (Ubuntu, Node v22.14.0, npm
 10.9.2). Where something does not work as you would expect, it says so and
 explains why.
 
+> **The paths are this machine's.** They are correct here and will need
+> substituting elsewhere. Unlike the screenshots in `docs/images/`, this file is
+> deliberately not path-free: a run guide that says `/your/path/to/thing` is
+> harder to copy and paste than one that shows the real folder.
+
 ---
 
 ## Prerequisites
@@ -49,14 +54,15 @@ The flag matters in exactly one case: **if you delete `package-lock.json`**. The
 npm resolves `tree-sitter@0.21.1` at the root while `packages/core` gets a
 nested `0.25.1`, and the grammar tests break. Keep the lockfile.
 
-To see the unsatisfied declarations for yourself (harmless):
+To see the unsatisfied declarations for yourself:
 
 ```bash
 npm ls tree-sitter
 ```
 
-It will mark `tree-sitter-typescript` and `tree-sitter-gdscript` as `invalid`.
-That is expected and does not affect anything.
+It marks `tree-sitter-typescript` and `tree-sitter-gdscript` as `invalid` and
+**exits 1** with `ELSPROBLEMS`. That is npm reporting an unsatisfied peer range,
+not a broken install — nothing above depends on it succeeding.
 
 ### One extra step: fetch the Electron binary
 
@@ -133,7 +139,7 @@ npm test                              # vitest, all packages
 npx vitest run packages/core/test/graph/analysis.test.ts   # one file
 ```
 
-**Result on this machine: 64 test files, 1235 tests, ~55 s.**
+**Result on this machine: 65 test files, 1258 tests, ~50 s.**
 
 Most suites are pure Node. Two Electron e2e suites are **skipped by default** and
 say so in their output rather than passing silently. Run them with:
@@ -141,6 +147,9 @@ say so in their output rather than passing silently. Run them with:
 ```bash
 CF_E2E=1 npx vitest run packages/app/test/e2e/patchLoop.test.ts
 ```
+
+(`CF_E2E_PATCH=1` works too for this one suite; the other two gate on `CF_E2E`
+alone.)
 
 They need a game project. Point them at one with `CF_PROJECT`:
 
@@ -164,7 +173,7 @@ Five stages, in order:
 | `lint:prefabs` | a prefab using `this`, module-level `let`, `Math.random` or `scene.add` |
 | `test` | any failing test |
 
-**Result: exit 0, ~56 s.**
+**Result: exit 0, ~52 s.**
 
 `check:three` has a **hardcoded default** game path
 (`/home/aymen/Documents/dark matter/kart-dash-3d-v2`). Override it:
@@ -199,12 +208,18 @@ folder path* and press **Open project**, or use **Browse…**.
 floor and four coloured karts, INSPECTOR (right).
 
 > **Working looks like:** 5 instances listed, karts rendered in distinct colours,
-> and a `PROBLEMS (2)` bar at the bottom. **Two problems are expected** — the
-> `hazardCrate` prefab throws on purpose (it is a SPEC R9 fixture, not a broken
-> asset) and `scene.json` has an instance with `width: -10`. A *clean* Problems
-> panel here would mean the checks are not running.
+> and a `PROBLEMS (4)` bar at the bottom.
+>
+> **Four rows is correct, and there are only two distinct causes** — which is the
+> thing worth understanding here. The `hazardCrate` prefab throws on purpose (it
+> is a SPEC R9 fixture, **not** a broken asset: its `create()` is a literal
+> `throw`), and `scene.json` has one instance with `width: -10`. Each cause
+> produces two rows: a project-level one and a per-instance one, so the developer
+> can jump from the panel to the object.
+>
+> A *clean* Problems panel here would mean the checks are not running.
 
-**3. Open the Problems panel.** Click the `PROBLEMS (2)` bar.
+**3. Open the Problems panel.** Click the `PROBLEMS (4)` bar.
 
 > **Working looks like:** **one** header, a count, and a list of rows. Each row
 > says what is wrong and which instance it belongs to, with a link to jump to it.
@@ -234,15 +249,18 @@ It edits a real file in the project, so the FIND text below matches exactly:
 **Preview** shows the diff **without writing anything**. **Apply patch** writes
 it and reports which files it touched.
 
-> **Working looks like:** an `APPLIED` banner naming the file — *"Wrote 1 file:
-> src/settings.js"* — a History entry below it, and `music: 0.4` in the file on
-> disk. **Ctrl+Z** reverts it as one step and the banner becomes *"Reverted 1
-> file: src/settings.js"*.
+> **Working looks like:** an `APPLIED` banner reading *"Wrote 1 file:
+> src/settings.js as one undo step (‹patchId›)."* — with the path repeated as a
+> bullet under it — plus a History entry, and `music: 0.4` in the file on disk.
+>
+> **Ctrl+Z** reverts it as one step. The banner's heading becomes `Undone` and the
+> line reads *"Reverted 1 file: src/settings.js (‹patchId›)."*
 >
 > **Try the refusal too:** change `0.55` in the FIND block to something else and
-> preview again. You get an amber banner naming the block that failed and
-> *"nothing will be written"* — and no byte on disk changes. A patch that fails on
-> one block writes none of them.
+> preview again. You get an amber line naming the block that failed — *"1 of the
+> 1 blocks in this reply could not be resolved, so nothing will be written. In
+> "src/settings.js" (edit block 1): …"* — and no byte on disk changes. A patch
+> that fails on one block writes none of them.
 
 Ctrl+Z does **not** fire while a text field has focus, so click the viewport
 first.
@@ -252,8 +270,10 @@ first.
 | | |
 | --- | --- |
 | `Ctrl+Z` | undo one step across all files |
-| `Ctrl+Shift+Z` | redo |
+| `Ctrl+Shift+Z` or `Ctrl+Y` | redo |
 | `Ctrl+S` | save `scene.json` (re-validates before writing) |
+
+`Cmd` is treated as `Ctrl` on macOS.
 
 ---
 
@@ -319,7 +339,7 @@ renamed the game project, set `CF_GAME_ROOT`.
 | --- | --- |
 | `packages/core` | the engine. No DOM, no Electron, no UI. |
 | `packages/app` | the Electron + Svelte shell over it. |
-| `docs/DECISIONS.md` | every design decision, D1–D46, with its reasoning |
+| `docs/DECISIONS.md` | every design decision, with its reasoning. D1–D47, with no D17–D19 (those numbers were never written; `package.json` still references "D17") |
 | `docs/OVERNIGHT.md` | the Step 5 build log, with what is proven and what is not |
 | `screenshots/` | proof screenshots, by iteration |
 | `SPEC.md` | the rules the code is held to |

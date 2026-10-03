@@ -452,14 +452,110 @@ folder is expected.
 
 ## Phase 6 — Run guide
 
-**Status:** pending
+**Status:** DONE
+**Window:** 00:35 → 01:05 (~30 min)
+**Commit:** `docs: RUNNING.md and PUSH.md; README updated for Step 5`
 
-_Not yet written._
+### Done
+
+`docs/RUNNING.md` — every command **executed on this machine**, plus a
+troubleshooting section and a five-item "first things to try" checklist for
+`kart-dash-3d-v2`.
+
+### Fact-checked, and five claims were wrong
+
+A subagent checked all 20 claims against reality and found **five problems**,
+which is the point of having written the doc rather than trusting it:
+
+1. **The Apply/Undo strings were truncated mid-sentence and the undo heading was
+   mislabelled.** The real banner reads *"Wrote 1 file: src/settings.js as one
+   undo step (‹patchId›)."* with the path repeated as a bullet under it — and on
+   undo the **heading** is `Undone`, not `Reverted`. I had quoted a fragment and
+   called the whole banner `Reverted`.
+2. **`PROBLEMS (2)` was wrong; it is `PROBLEMS (4)`.** There are only *two*
+   distinct causes — a prefab that throws on purpose and one instance with
+   `width: -10` — and each produces two rows, a project-level one and a
+   per-instance one. The doc conflated "two causes" with "two rows". This is
+   exactly the kind of claim a reader uses to decide whether the app is broken.
+3. **The decision log is D1–D47, not D1–D46** — and D17–D19 do not exist at all,
+   though `package.json` still references "D17". Noted rather than papered over.
+4. **`npm ls tree-sitter` exits 1**, not 0. The doc called it harmless without
+   saying it fails, which would read as a broken install to anyone piping it
+   into a script.
+5. **Test counts were stale** the moment I finished Phase 5e: 64/1235 → **65/1258**.
+
+Two smaller gaps also closed: `Ctrl+Y` is *also* redo (only `Ctrl+Shift+Z` was
+documented), and the patch e2e is gated on `CF_E2E` **or** `CF_E2E_PATCH`.
+
+### Verified, not assumed
+
+- `npm ci` exits 0 with **no** `--legacy-peer-deps` — tested in a scratch copy
+  of the lockfile, never in the real repo.
+- `chrome-sandbox` is `-rwxr-xr-x` (no setuid bit), which is *why* `--no-sandbox`
+  is required; `main.ts` keeps `sandbox: true` and `contextIsolation: true`, so
+  the flag costs the app nothing.
+- `electron@44.5.1` declares **no** `postinstall`, which is why the binary has
+  to be fetched by hand.
+- **The documented patch example applies.** `  music: 0.55,` was checked
+  byte-by-byte (`od -c`) against `kart-dash-3d-v2/src/settings.js` — two leading
+  spaces, exactly as written. A wrong indentation would have made the one thing
+  a reader pastes into the app fail.
+- The project's counts, re-derived by running the real extractors: **37 nodes,
+  46 edges, 4 unreferenced**, 5 instances. The `entry_point` / `unreferenced`
+  split is real: 2 of each.
+
+### Not proven
+
+- `npm run start`, the Electron launch and the `CF_E2E` runs were **verified by
+  reading source, not executed** — they mutate state or need a display. Stated
+  in the doc's own words where it matters.
 
 ---
 
 ## Phase 7 — GitHub prep
 
-**Status:** pending
+**Status:** DONE
+**Window:** 01:05 → 01:20 (~15 min)
+**Commit:** same as Phase 6
 
-_Not yet written._
+### Done
+
+- **`.gitignore` and `LICENSE`** already existed and were audited, not rewritten.
+- **`docs/PUSH.md`** — new. States plainly that **the repo is already public and
+  pushed**, so nobody runs a create-repo command against a live one. Then: the
+  everyday commit loop, first push with and without `gh`, forking, how to verify
+  a push landed (including an anonymous `curl`, which is what actually proves a
+  repo is public rather than merely visible to its owner), the pre-publish
+  checks, and `--force-with-lease` rather than `--force`.
+- **README** updated for Step 5: the Graph screen and New Project flow written up
+  as features with their tests named, five new screenshots embedded, the roadmap
+  split into 5a–5f, and a new **"Known limits, stated plainly"** section.
+
+### The honesty work matters more than the new sections
+
+Four things the README now says outright rather than implying:
+
+- Attach-to-context **records a selection**; it does not feed a compiled prompt.
+- New Project **produces a prompt, not a folder**.
+- `findCycles` is **super-linear and unfixed**.
+- **The clipboard write is untested** — no jsdom, so the copy buttons are proven
+  only at the level of "is it enabled".
+
+Also corrected: `--legacy-peer-deps` is presented as unnecessary (with the one
+case where it matters), `npm ls tree-sitter`'s non-zero exit is explained,
+`npm run start`'s missing `--no-sandbox` is called out as a known gap, and the
+Electron binary step is no longer optional-sounding.
+
+### Verified
+
+Every `docs/images/` link in the README resolves; no image is committed and
+unreferenced; all 13 images scanned clean for the author's absolute path.
+
+### Not proven
+
+- Nothing was pushed. `origin` is unchanged and `main` is one commit ahead of
+  `origin/main` by design.
+
+### Verification
+
+`npm run verify` green: **65 files, 1258 tests**.
