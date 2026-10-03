@@ -1,0 +1,102 @@
+<!doctype html>
+<!--
+  index.html — the renderer document.
+
+  There is no `<script type="module" src>` pointing at Electron. The renderer is
+  a static bundle: Vite rewrites this to `dist/renderer/assets/*.js`, and
+  `main.ts` loads `dist/renderer/index.html` with `loadFile`. That is deliberate
+  — the build has to be inspectable and the app has to start with no dev server
+  and no network, so a "just works in dev, ships differently" arrangement is not
+  one worth having here.
+
+  The `Content-Security-Policy` is applied as a real `<meta>` tag rather than
+  only as a response header. `loadFile` serves a `file://` URL and cannot attach
+  headers, so the meta tag is the *only* place this document can carry a policy;
+  `main.ts` sets the same value in code, and the two are written to match. A
+  renderer that could load a remote script would defeat `contextIsolation`.
+
+  `script-src` carries `blob:` and not `data:`. The renderer dynamically imports
+  browser-bundled prefab modules, so a non-`'self'` script scheme has to be
+  allowed at all; `data:` would allow *any* string to execute as script, which is
+  the one thing the policy exists to stop. `img-src`/`font-src` keep `data:`
+  because those are inert payloads. `contract.test.ts` asserts the meta tag and
+  `main.ts` agree, and that `script-src` does not name `data:`.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self' blob:; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'"
+    />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>ContextForge</title>
+    <style>
+      /*
+        A small, deliberate reset rather than a framework. Four rules is what
+        this app needs from CSS, and a reset is the only place where "why is
+        this here" is a real question.
+      */
+      :root {
+        color-scheme: dark;
+        --bg: #12131a;
+        --panel: #1a1c26;
+        --panel-2: #212430;
+        --line: #2c3040;
+        --text: #e6e6ea;
+        --muted: #9aa0b4;
+        --accent: #4fc3f7;
+        --danger: #ff6b6b;
+        --warning: #ffcc66;
+        --ok: #7ddc8b;
+        font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
+        font-size: 14px;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      html,
+      body,
+      #app {
+        height: 100%;
+        margin: 0;
+      }
+      body {
+        background: var(--bg);
+        color: var(--text);
+        overflow: hidden;
+      }
+      /*
+        Every interactive element gets a visible label and a focus ring. An
+        unlabelled icon button is a hard rule in this project, and a focus ring
+        nobody can see is the keyboard equivalent of the same mistake.
+      */
+      button,
+      input,
+      select,
+      textarea {
+        font: inherit;
+        color: inherit;
+      }
+      button:focus-visible,
+      input:focus-visible,
+      select:focus-visible,
+      textarea:focus-visible,
+      [tabindex]:focus-visible {
+        outline: 2px solid var(--accent);
+        outline-offset: 1px;
+      }
+      button {
+        cursor: pointer;
+      }
+      button:disabled {
+        cursor: default;
+        opacity: 0.5;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="app"></div>
+    <script type="module" src="/src/renderer/main.ts"></script>
+  </body>
+</html>

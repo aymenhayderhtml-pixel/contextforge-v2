@@ -1,0 +1,33 @@
+{
+  // The renderer half of the app, which `tsconfig.json` deliberately excludes.
+  //
+  // Two things separate it from the main-process config:
+  //
+  //  1. **`lib` includes `DOM`.** The renderer *is* a browser: it has `window`,
+  //     `document` and `HTMLCanvasElement`, and a Three.js viewport cannot exist
+  //     without them. The main-process config must *not* have them, because a main
+  //     process that could reach `document` could be tricked into it. Keeping the
+  //     two configs apart is what makes "core and the main process are headless"
+  //     checkable rather than aspirational.
+  //  2. **`composite: false` and `noEmit`.** Nothing here is compiled to
+  //     `dist/`. The renderer is bundled by Vite, which runs Svelte's own
+  //     compiler; running `tsc` over it a second time would mean two tools
+  //     disagreeing about the same file. Type checking is the only job here, and
+  //     `svelte-check` does the `.svelte` half.
+  //
+  // This file is referenced by `tsconfig.json` but produces nothing, so
+  // `tsc --build` type-checks it and stops.
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "types": [],
+    "composite": false,
+    "declaration": false,
+    "declarationMap": false,
+    "noEmit": true,
+    "allowImportingTsExtensions": true
+  },
+  "include": ["src/renderer/**/*.ts", "src/renderer/**/*.svelte"],
+  "exclude": ["node_modules"],
+  "references": [{ "path": "../core" }, { "path": "./tsconfig.json" }]
+}

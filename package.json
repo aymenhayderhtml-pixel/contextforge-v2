@@ -1,0 +1,33 @@
+{
+  "name": "contextforge-v2",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Desktop app that lets one developer use many AIs to build games without losing context or breaking dependencies.",
+  "type": "module",
+  "license": "MIT",
+  "workspaces": [
+    "packages/*"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "//": "tree-sitter-typescript@0.23.2 and tree-sitter-gdscript@6.1.0 still declare peer deps on tree-sitter ^0.21.x, so installing alongside tree-sitter 0.25 needs --legacy-peer-deps. See D17.",
+  "scripts": {
+    "postinstall": "echo \"If npm failed on a peer-dependency conflict: use 'npm install --legacy-peer-deps' (see D17).\"",
+    "typecheck": "tsc --build tsconfig.json",
+    "build": "tsc --build tsconfig.json",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "check:boundaries": "node scripts/check-boundaries.mjs",
+    "check:three": "node scripts/check-three-pinned.mjs",
+    "lint:prefabs": "tsc --build tsconfig.json && node scripts/lint-prefabs.mjs",
+    "check:native": "npm run check:native -w @contextforge/app",
+    "verify": "npm run check:boundaries && npm run check:three && npm run typecheck && npm run lint:prefabs && npm test"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "typescript": "^5.7.2",
+    "vite": "^6.3.6",
+    "vitest": "^5.0.3"
+  }
+}
