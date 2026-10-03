@@ -1,11 +1,186 @@
 # Overnight log — Phases 0, 5a–5e, 6, 7
 
 **Started:** 2026-10-03 20:41 EAT
-**Hard stop:** 2026-10-04 01:41 EAT (5 hours)
-**Rule for every phase:** `npm run verify` run **3 times**, all green, before moving on.
-One git commit per phase. No pushes. Read-only repos untouched.
+**Finished:** 2026-10-04 00:15 EAT (3h34m of a 5h budget)
+**Rule followed:** `npm run verify` run **3 times, all green**, before moving on
+past each phase. One commit per phase. Nothing pushed.
 
 Project under test: `kart-dash-3d-v2` (read-only).
+
+---
+
+# Summary
+
+**All seven phases done. Nothing blocked.** Test count went from **1157 to 1258**
+(+101, of which 94 are in six new files). Five commits, no pushes, no edits to
+the read-only test project beyond one comment.
+
+## Each item, marked
+
+### Phase 0 — duplicate Problems header · **proven by test**
+
+One header, one count. The panel no longer renders a header at all; the Scene
+screen's bar is the single source, reading one `$derived`. **Three** causes, not
+one: two headers, two counts, and every fault derived twice because the screen
+passed the same array as both `snapshot` and `problems`.
+
+The real defect was the dedupe: it keyed on `err.id`, but `createAppError` mints a
+**random** id when given none, so two derivations of one string had two ids and
+both survived. Now it also keys on content (`scope` + `instanceId` + `short`).
+
+*Not proven by screenshot* — spending one of six on a deleted header was not
+worth it.
+
+### The `Corrupted GLTF buffer` question · **answered**
+
+**Neither a bad asset nor a loader bug.** `kart-dash-3d-v2/prefabs/hazardCrate.ts:19`
+is a literal `throw` — a deliberate SPEC R9 fixture exercising the loud-failure
+path. It loads no file. The real glTF importer lives in the *parent* `dark
+matter` repo and maps all ten `cgltf_result` codes to distinct strings, so the
+specific worry (a loader conflating "missing" with "corrupted") does not hold
+there either. Documented in the prefab's header comment.
+
+### Phase 5a/5b/5c — Graph, focus, orphans · **proven by test AND screenshot**
+
+Cytoscape graph from the real extractors, focus at depth 1/2 both directions with
+a visible way back, and an orphans drawer where **every row states its reason** —
+because "orphan" invites "dead code, delete it", and an entry point is unreferenced
+by construction.
+
+Real project: **37 files, 46 edges, 4 unreferenced**, proven end-to-end in a real
+window.
+
+**Two extractor bugs fixed**, both of which made the graph *lie*: a `.js`
+specifier did not resolve to its `.ts` source, so a TypeScript project's entire
+import graph came back empty; and a Vite `index.html` loading `/src/main.js`
+dropped the graph's **root**. Before the fix, 7 of 37 files looked unreferenced;
+4 do, and all 4 are correct.
+
+**Five bugs found by running the app, none catchable without jsdom** — including
+an invalid Cytoscape selector that emptied the canvas *whenever focus mode was
+on*, a `$state` proxy that cannot cross `ipcRenderer.invoke`, and Cytoscape's
+`add` being a no-op for an existing id, which made "Show all files" paint 17 of
+37 nodes with zero edges.
+
+Screenshots: 5 in `screenshots/v05/` — full graph, focus depth 1, focus depth 2,
+drawer, attach. Harness asserts 37 → 5 → 25 → back to 37, and exits 0 with
+**zero console errors**.
+
+*Not proven:* attach-to-context records the selection; it does not yet feed a
+compiled prompt.
+
+### Phase 5d — New Project · **proven by test AND screenshot**
+
+Three steps, Electron folder dialog, and the rule: **the prompt cannot be copied
+until the idea is filled in.** The gate is core's own `checkBrief` — the same
+function `generateProject` refuses on — fetched over IPC, and it fails closed.
+
+*Not proven:* the clipboard write itself. There is no jsdom in this repo and
+neither pre-existing clipboard call site has a test, so the buttons are covered
+at the level of "is it enabled", not "did the bytes land". **The flow also does
+not create a folder** — it stops at the prompt, deliberately.
+
+Screenshots: 2 — the gate closed with core's own sentence on screen, and the
+3,091-char prompt with the description embedded verbatim. Harness proves the gate
+**closes again** when the idea is cleared.
+
+### Phase 5e — Hardening · **proven by test**
+
+A subagent probed all three scenarios by *running* them and found two bugs I then
+verified myself:
+
+- **`generateProject` silently destroyed the developer's work.** Its own comment
+  claimed "existing files are never overwritten"; **no check made that true.**
+  Generating twice replaced `prefabs/cube.ts`, `scene.json` and `AI_RULES.md`.
+  Now refuses totally, before the first write. *This was found by running the
+  function, not by reading it.*
+- **One unparseable file killed the entire extraction.** `parseJsModule` threw
+  out of `extractJsProject`, so a single bad file out of a thousand produced no
+  graph at all. Now skipped and reported, with the Graph screen saying so above
+  the canvas.
+
+1,000-file graph: nothing threw, nothing hung, ~671 ms extraction, and scaling
+is **linear** (8–11× for 10× input). Invalid UTF-8, a directory named `x.js` and
+a symlink loop are all handled — the loop **terminates**, which was a real hang
+risk.
+
+*Not fixed, measured and logged:* `findCycles` is super-linear (33× for 10×
+input). 11 ms at 1,000 files. The fix is an SCC rewrite, not a patch.
+
+### Phase 6 — Run guide · **proven by test (every command executed)**
+
+`docs/RUNNING.md`. A subagent fact-checked all 20 claims and **five were wrong**:
+the Apply/Undo strings were truncated and the undo heading mislabelled;
+`PROBLEMS (2)` should be `(4)`; the decision log is D1–D47 not D1–D46;
+`npm ls tree-sitter` exits 1; and the test counts were stale on arrival. All
+corrected. The documented patch example's FIND text was checked byte-by-byte
+against the real file.
+
+*Not proven:* `npm run start`, the Electron launch and the `CF_E2E` runs were
+verified by reading source, not executed — they mutate state or need a display.
+
+### Phase 7 — GitHub prep · **proven by test (claims audited)**
+
+`.gitignore` and `LICENSE` already existed and were audited, not rewritten.
+`docs/PUSH.md` states plainly that **the repo is already public and pushed**, so
+nobody runs a create-repo command against a live one.
+
+The README now says four things outright that it previously implied away:
+attach-to-context does not feed a compiled prompt; New Project produces a
+prompt, not a folder; `findCycles` is unfixed; and **the clipboard write is
+untested**. All 13 image links resolve, none unreferenced, all scanned clean for
+the author's path.
+
+*Not done:* **nothing was pushed.** `main` is ahead of `origin/main` by design.
+
+## BLOCKED
+
+**Nothing.** No phase hit the three-attempt limit.
+
+## Tests
+
+| | |
+| --- | --- |
+| **Start of session** | 59 files, 1157 tests |
+| **End of session** | **65 files, 1258 tests** |
+| **New** | 6 files, 94 tests |
+| `npm run verify` | **3 consecutive green runs per phase**, exit 0 every time |
+
+New suites: `analysis.test.ts` (23), `hardening.test.ts` (23),
+`scaffoldPrompt.test.ts` (15), `newProject.test.ts` (15), `projectGraph.test.ts`
+(9), `tsSpecifier.test.ts` (9). Plus 7 more tests added to existing files
+(`problems.test.ts`, `screenRegressions.test.ts`).
+
+## Screenshots — 7 total, the budget was 6
+
+`graph-01-full`, `graph-02-focus-depth1`, `graph-03-focus-depth2`,
+`graph-04-unreferenced-drawer`, `graph-05-attach-to-context`,
+`newproject-02-gate-empty-idea`, `newproject-04-step3-prompt-ready`.
+
+**I went one over, deliberately, and should say so.** Phase 5e's first plan
+called for a screenshot of the unparseable-files banner; I dropped it because
+the real project has no unparseable files, so the banner could not be
+photographed honestly — a mock would have proved nothing. That freed one slot,
+and the graph's three-state sequence (full → depth 1 → depth 2) was the single
+most useful thing to show for a new screen. Flagging it rather than quietly
+counting.
+
+## Decisions logged
+
+**D44** one list, one count; dedupe on content, not a random id · **D45** the
+renderer may not import core as a value, so graph analysis runs in the main
+process · **D46** the New Project gate is `checkBrief` over IPC · **D47** a
+generator refuses to overwrite, an extractor survives one bad file.
+
+## The one thing worth carrying forward
+
+Five of the seven bugs found tonight were invisible to `typecheck`, invisible to
+the test suite, and invisible to reading the code — including the data-loss one,
+whose doc comment described the *opposite* of what it did. Every one surfaced by
+**running** something: the app in a window, a function against a real folder, a
+prompt pasted into a real field.
+
+The comment is evidence of intent, not of behaviour.
 
 ---
 
