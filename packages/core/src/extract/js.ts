@@ -12,7 +12,7 @@
  * or directory specifier is probed for the usual extensions.
  */
 
-import { existsSync } from 'node:fs';
+import { existsSync, statSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
 import type {
   DependencyGraph,
@@ -21,7 +21,7 @@ import type {
   NodeContract,
 } from '../graph/types.js';
 import { normalizeDeps, sortGraph, withDependedOnBy } from '../graph/reverse.js';
-import { jsContractExports, parseJsModule } from '../parse/js.js';
+import { jsContractExports, parseJsModule, type JsModuleContract } from '../parse/js.js';
 import { parseInCodeSlotHints, isAssetFile, parseSlotContract } from './assets.js';
 import { readTextFileOrNull, scanFiles } from './files.js';
 import { extractHtmlEntrypoints } from './html.js';
@@ -40,14 +40,68 @@ const RESOLUTION_EXTENSIONS: readonly string[] = [
 const EXTERNAL_PREFIXES = ['three', 'react', 'vue', '@types/', 'node:'];
 
 /**
+ * True when `path` is a directory.
+ *
+ * `statSync` rather than `existsSync`, and it returns false rather than throwing
+ * on a permission error: a folder the process cannot stat is not a folder it can
+ * read, and `scanFiles` will find nothing in it either. The one thing this must
+ * never do is report a file as a directory.
+ */
+function isDirectory(path: string): boolean {
+  try {
+    return statSync(path).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * A file that exists in the project but could not be parsed.
+ *
+ * Reported rather than swallowed: a skipped file is a gap in the graph, and a
+ * gap the developer cannot see is the same as a file that does not exist. The
+ * reason is tree-sitter's own, naming the position it gave up at.
+ */
+export interface UnparseableFile {
+  /** Project-relative path. */
+  path: string;
+  /** Why it could not be parsed. */
+  reason: string;
+}
+
+/**
  * Extract the dependency graph for a JS/Three.js project.
  *
  * `depends_on_by` is left empty here and filled in by `withDependedOnBy`: a
  * parser sees what a file imports, never what imports it.
+ *
+ * `onUnparseable`, if given, receives every file that could not be parsed. Such
+ * a file is **omitted from the graph** rather than included with a guessed empty
+ * contract: an empty contract reads as "this file imports nothing", which is a
+ * plausible-looking wrong answer, whereas its absence is honest. The callback is
+ * a parameter rather than a return field because `DependencyGraph` is the
+ * manifest's public schema and adding a field to it would change every
+ * validator.
  */
-export function extractJsProject(projectRoot: string): DependencyGraph {
+export function extractJsProject(
+  projectRoot: string,
+  onUnparseable?: (file: UnparseableFile) => void,
+): DependencyGraph {
   if (!existsSync(projectRoot)) {
     throw new Error(`Project folder not found: "${projectRoot}"`);
+  }
+  /**
+   * Refuse a path that is a file.
+   *
+   * `scanFiles` on a file path returns nothing, so before this check a mistyped
+   * path that happened to land on a file produced an empty graph — byte for byte
+   * identical to a real project with no files in it. That is the specific
+   * failure SPEC R9 names: a plausible-looking wrong answer. The existence check
+   * above already refuses a missing path, so refusing a *wrong kind* of existing
+   * path makes the two consistent.
+   */
+  if (!isDirectory(projectRoot)) {
+    throw new Error(`Not a folder: "${projectRoot}". Point this at a project folder, not a file.`);
   }
 
   const files = scanFiles(projectRoot, { extensions: MODULE_EXTENSIONS });
@@ -63,7 +117,33 @@ export function extractJsProject(projectRoot: string): DependencyGraph {
     const source = readTextFileOrNull(file.absolutePath);
     if (source === null) continue;
 
-    const contract = parseJsModule(source, file.relativePath);
+    /**
+     * One unparseable file must not end the extraction.
+     *
+     * `parseJsModule` throws on a file tree-sitter cannot parse — a half-written
+     * file, an AI mid-edit, a file saved in an encoding we did not expect. Before
+     * this, that throw propagated out of `extractJsProject` and the *whole* graph
+     * was lost: one broken file out of 1,000 and the developer got nothing at all,
+     * with an error naming a file they may not have been looking at. Phase 5e
+     * found this by writing one broken file into a two-file project.
+     *
+     * The file is skipped and recorded. Skipping rather than substituting a
+     * guessed contract matters: an empty `contract` would place the file in the
+     * graph with no exports and no imports, which reads as "this file imports
+     * nothing" — a plausible-looking wrong answer. Omitting it is honest, and the
+     * reason is reported to `onUnparseable`.
+     */
+    let contract: JsModuleContract;
+    try {
+      contract = parseJsModule(source, file.relativePath);
+    } catch (error) {
+      onUnparseable?.({
+        path: file.relativePath,
+        reason: error instanceof Error ? error.message : String(error),
+      });
+      continue;
+    }
+
     const dependsOn: string[] = [];
 
     // ── Import edges ──

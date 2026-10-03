@@ -22,7 +22,7 @@
  * SPEC R9: refuse rather than produce a plausible-looking wrong thing.
  */
 
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { SCENE_SCHEMA_VERSION, type SceneFile } from './scene.schema.js';
 import { serializeScene } from './sceneFile.js';
@@ -129,9 +129,28 @@ export interface GeneratedProject {
  * Write a new project.
  *
  * Throws `IncompleteBriefError` rather than generating a template around a
- * missing idea. Existing files are never overwritten: a generator that
- * silently replaces a developer's `prefabs/cube.ts` would be a data-loss bug,
- * and "the folder already has files" is a clear enough message.
+ * missing idea.
+ *
+ * ## It refuses to write into a folder that already has any of its files
+ *
+ * The comment on this function used to claim that "existing files are never
+ * overwritten", and **there was no check that made that true** —
+ * `writeFileSync` ran unconditionally, so generating a second time over a folder
+ * the developer had edited silently replaced `prefabs/cube.ts`, `scene.json` and
+ * `AI_RULES.md` with the template. Phase 5e found this by running it, not by
+ * reading it: the comment described the intended behaviour, the code did the
+ * opposite, and nothing between the two said so.
+ *
+ * Silent data loss is the worst failure this function has, so the refusal is
+ * total rather than per-file. A generator that skipped the files it found and
+ * wrote the rest would leave the developer with a *half* template — some files
+ * theirs, some the template's — which is harder to reason about than a clean
+ * refusal and much harder to undo.
+ *
+ * Unrelated files in the folder are fine and untouched: only the six this
+ * generator would write are checked, so pointing it at a folder that also holds
+ * `src/` or a `node_modules/` is still refused only if one of *its* six is
+ * present.
  */
 export function generateProject(root: string, brief: Partial<GameBrief>): GeneratedProject {
   const problems = checkBrief(brief);
@@ -201,6 +220,28 @@ export function generateProject(root: string, brief: Partial<GameBrief>): Genera
   ];
 
   const written: string[] = [];
+
+  /**
+   * The refusal, checked **before the first write**.
+   *
+   * Order matters as much as the check. Writing one file and then discovering a
+   * second one exists would leave the developer with a partly-written template —
+   * and the one file already replaced is the one they cannot get back.
+   */
+  const existing = files
+    .map(([relativePath]) => relativePath)
+    .filter((relativePath) => existsSync(join(root, relativePath)));
+  if (existing.length > 0) {
+    throw new Error(
+      `Cannot generate a project in ${root} — it already contains ${existing.length} of the ` +
+        `${files.length} file(s) this generator writes:\n` +
+        existing.map((p) => `  - ${p}`).join('\n') +
+        `\n\nGenerating again would overwrite them. Nothing has been written. If this is a\n` +
+        `new project, pick an empty folder; if you meant to keep what is there, this\n` +
+        `folder is already a project and you can just open it.`,
+    );
+  }
+
   for (const [relativePath, contents] of files) {
     const absolute = join(root, relativePath);
     mkdirSync(dirname(absolute), { recursive: true });

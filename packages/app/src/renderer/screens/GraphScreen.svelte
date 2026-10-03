@@ -32,6 +32,7 @@
     GraphNode,
     GraphSummary,
     Orphan,
+    UnparseableFile,
   } from '@contextforge/core';
   import type { EditorStore } from '../store.js';
   import { CHANNELS } from '../../ipc.js';
@@ -44,6 +45,14 @@
   let summary = $state<GraphSummary | null>(null);
   /** core's unreferenced files, each with the reason it was flagged. */
   let orphans = $state<Orphan[]>([]);
+  /**
+   * Files that exist in the project but could not be parsed.
+   *
+   * Shown, not hidden. Before the extractor was made to survive one, a single
+   * broken file threw and the whole graph was empty — and an empty graph with a
+   * broken file in it is indistinguishable from an empty graph without one.
+   */
+  let unparseable = $state<UnparseableFile[]>([]);
 
   /**
    * The focused neighbourhood, requested from core when the selection changes.
@@ -108,6 +117,7 @@
         graph = { nodes: result.value.nodes, edges: result.value.edges };
         summary = result.value.summary;
         orphans = result.value.orphans;
+        unparseable = result.value.unparseable;
       } else {
         // Said out loud. An empty canvas for a project that failed to read is
         // indistinguishable from a project with no files, and the developer
@@ -116,12 +126,14 @@
         graph = null;
         summary = null;
         orphans = [];
+        unparseable = [];
       }
     } catch (thrown) {
       error = thrown instanceof Error ? thrown.message : String(thrown);
       graph = null;
       summary = null;
       orphans = [];
+      unparseable = [];
     } finally {
       loading = false;
     }
@@ -433,6 +445,28 @@
     <p class="status">Reading the project…</p>
   {:else if error !== null}
     <p class="status error" role="alert">{error}</p>
+  {:else if unparseable.length > 0}
+    <!--
+      Said before the canvas, because it changes what the canvas means: these
+      files are missing from the graph below. A half-written file or one saved
+      in an unexpected encoding is the usual cause, and it is worth naming
+      rather than leaving the developer to wonder why a file they can see is not
+      in the picture.
+    -->
+    <div class="unparseable" role="alert">
+      <strong>{unparseable.length} file(s) could not be parsed</strong>
+      <p class="why">
+        They are <em>missing from the graph below</em> — not absent from the project.
+      </p>
+      <ul>
+        {#each unparseable as file (file.path)}
+          <li>
+            <span class="path">{file.path}</span>
+            <span class="reason-text">{file.reason}</span>
+          </li>
+        {/each}
+      </ul>
+    </div>
   {/if}
 
   <div class="body">
@@ -552,6 +586,42 @@
   .status.error {
     color: #e0714f;
     opacity: 1;
+  }
+  .unparseable {
+    border-left: 3px solid #b4553a;
+    background: rgba(180, 85, 58, 0.08);
+    padding: 0.4rem 0.6rem;
+    border-radius: 2px;
+    font-size: 0.8rem;
+  }
+  .unparseable .why {
+    margin: 0.2rem 0 0.35rem;
+    opacity: 0.75;
+  }
+  .unparseable ul {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    max-height: 140px;
+    overflow-y: auto;
+  }
+  .unparseable li {
+    display: flex;
+    gap: 0.5rem;
+    align-items: baseline;
+  }
+  .unparseable .path {
+    font-family: monospace;
+    flex: 0 0 auto;
+  }
+  .unparseable .reason-text {
+    opacity: 0.65;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
   .body {
     display: flex;

@@ -48,6 +48,7 @@ import type {
   Orphan,
   SceneFile,
   SceneEdit,
+  UnparseableFile,
 } from '@contextforge/core';
 
 /**
@@ -682,6 +683,14 @@ export interface IpcRequests {
       summary: GraphSummary;
       /** Unreferenced files, each with the reason it was flagged. */
       orphans: Orphan[];
+      /**
+       * Files that exist but could not be parsed.
+       *
+       * Returned rather than silently omitted: a skipped file is a gap in the
+       * graph, and a gap the developer cannot see is indistinguishable from a
+       * file that does not exist.
+       */
+      unparseable: UnparseableFile[];
     }>;
   };
 

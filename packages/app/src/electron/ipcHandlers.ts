@@ -93,6 +93,7 @@ import {
   type Orphan,
   type SceneEdit,
   type SceneFile,
+  type UnparseableFile,
 } from '@contextforge/core';
 import {
   CHANNELS,
@@ -1484,11 +1485,11 @@ export class AppBackend {
   }
 
   /** Build the graph for the Context screen. Slow, so it is never on a hot path. */
-  private buildManifestFor(root: string): Manifest {
+  private buildManifestFor(root: string, onUnparseable?: (f: UnparseableFile) => void): Manifest {
     if (existsSync(join(root, 'project.godot'))) {
       return buildManifest(root, extractGodotProject(root), new Date().toISOString());
     }
-    return buildManifest(root, extractJsProject(root), new Date().toISOString());
+    return buildManifest(root, extractJsProject(root, onUnparseable), new Date().toISOString());
   }
 
   /**
@@ -1509,22 +1510,26 @@ export class AppBackend {
     edges: GraphEdge[];
     summary: GraphSummary;
     orphans: Orphan[];
+    /** Files that exist but could not be parsed, and why. */
+    unparseable: UnparseableFile[];
   }> {
     const root = this.root;
     if (root === null) return fail('No project is open, so there is no graph to show.');
 
+    const unparseable: UnparseableFile[] = [];
     try {
-      const manifest = this.buildManifestFor(root);
+      const manifest = this.buildManifestFor(root, (file) => unparseable.push(file));
       const graph: DependencyGraph = { nodes: manifest.nodes, edges: manifest.edges };
       return ok({
         nodes: graph.nodes,
         edges: graph.edges,
         summary: summariseGraph(graph),
         orphans: findOrphans(graph),
+        unparseable,
       });
     } catch (error) {
-      // The extractors throw on a missing folder and on an unreadable file. A
-      // graph screen that renders an empty canvas for a project that failed to
+      // The extractors throw on a missing folder and on a path that is a file.
+      // A graph screen that renders an empty canvas for a project that failed to
       // read looks identical to a project with no files, so the reason is
       // returned rather than swallowed.
       return fail(error instanceof Error ? error.message : String(error));

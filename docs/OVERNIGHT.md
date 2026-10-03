@@ -334,9 +334,119 @@ prompt.
 
 ## Phase 5e — Hardening
 
-**Status:** pending
+**Status:** DONE
+**Window:** 23:50 → 00:35 (~45 min)
+**Commit:** `fix: survive a broken file; refuse to overwrite; hardening suite`
 
-_Not yet written._
+A subagent probed all three scenarios empirically rather than by reading, and
+found **two real bugs**, one of them data loss. I verified both myself before
+fixing.
+
+### 🔴 Bug 1 — `generateProject` silently destroyed the developer's work
+
+Its own doc comment said *"Existing files are never overwritten"*. **There was no
+check making that true.** `writeFileSync` ran unconditionally, so generating a
+second time over a folder the developer had edited silently replaced
+`prefabs/cube.ts`, `scene.json` and `AI_RULES.md` with the template.
+
+The comment described the intended behaviour, the code did the opposite, and
+nothing between the two said so. This is exactly what SPEC R9 is written
+against — and it was found by *running* the function, not by reading it.
+
+**Fixed:** a total refusal, checked **before the first write**, naming the
+conflicting files. Total rather than per-file on purpose: skipping the files it
+found and writing the rest would leave a *half* template, which is harder to
+reason about and much harder to undo. Files the generator does not own are
+irrelevant — pointing it at a folder holding `src/` still works.
+
+### 🔴 Bug 2 — one unparseable file killed the entire extraction
+
+`parseJsModule` throws on a file tree-sitter cannot parse — a half-written file,
+one saved mid-edit, one in an unexpected encoding. That throw propagated out of
+`extractJsProject`, so **one broken file out of a thousand lost the whole
+graph**: no partial result, no fallback, just an error naming a file the
+developer may not have been looking at.
+
+**Fixed:** the file is skipped and reported through a new `onUnparseable`
+callback, which the app threads to `graph:project` and the Graph screen shows
+above the canvas — *"2 files could not be parsed… they are missing from the graph
+below"*. **Skipped, not given an empty contract:** an empty contract reads as
+"this file imports nothing", which is the plausible-looking wrong answer this
+project exists to avoid; its absence is honest.
+
+The callback is a parameter rather than a return field because
+`DependencyGraph` is the manifest's public schema and a new field would change
+every validator.
+
+### Also fixed — a path that is a file returned an empty graph
+
+`extractJsProject('/path/to/a.js')` returned `{nodes: [], edges: []}` — byte for
+byte identical to a real project with no files. `scanFiles` on a file finds
+nothing, so the missing-folder guard above it never fired. Now refused, which
+makes "missing" and "wrong kind of existing" behave alike.
+
+### Proven not broken
+
+Everything else held up under probing, and I am recording that rather than
+inventing problems:
+
+- **Empty project** — extracts `{nodes:[],edges:[]}` without throwing;
+  `summariseGraph` gives zeroes, not `undefined`; `findOrphans` gives `[]`; the
+  manifest validates; `generateProject` writes into it.
+- **1,000 files** — nothing threw, nothing hung. Extraction ~671 ms (dominated
+  by tree-sitter, not graph assembly), `summariseGraph` 3 ms, `findOrphans`
+  2.5 ms, `focusNeighbourhood` 0.4 ms. Scaling 100 → 1000 files is ~8–11×,
+  i.e. **linear**.
+- **`findCycles` is the one super-linear function**: 33× for a 10× input. Cause
+  is `[...cycle].sort().join('|')` per detected cycle, so a 991-node cycle costs
+  O(n log n) to canonicalise, 99 times. It is 11 ms at 1,000 files and 34 ms at
+  2,000, so this is a complexity note, not an urgent fix; logged rather than
+  rewritten.
+- **Invalid UTF-8, a directory named `x.js`, a symlink loop** — all handled. The
+  symlink loop **terminates**, which was a real hang risk.
+- **App layer** — every broken-folder refusal carries a specific, UI-ready
+  sentence. A folder **deleted after opening** returns a clean refusal, not
+  stale data.
+
+### Proven by test
+
+`packages/core/test/scene/hardening.test.ts` — **23 tests**, all passing:
+
+- 5 pinning `generateProject`'s refusal, including **byte-for-byte** survival of
+  the developer's edits and the "nothing written yet" ordering.
+- 2 pinning that one broken file costs only itself — asserted on the *edges*,
+  so the surviving graph is still a graph and not a pile of isolated nodes.
+- 6 on the 1,000-file graph, with loose thresholds chosen to catch an
+  accidental O(n²) (10× input should cost ~10×, quadratic costs 100×) without
+  failing on a slow machine.
+- 6 on broken folders, including the symlink loop's termination.
+
+Two of my own test expectations were wrong and are recorded because each would
+have made the suite pass for the wrong reason: I asserted a 50-node focus
+neighbourhood where the graph's back-edges legitimately produce 105, and I used
+bare filenames where node ids are `src/`-prefixed. The focus assertion now
+spans the range that separates "a neighbourhood" from "the whole graph" and
+from "just the chain".
+
+### Not proven
+
+- **The `findCycles` complexity is not fixed.** Measured and documented.
+- **No screenshot this phase.** The unparseable-files banner has no visual
+  proof; it is covered by the shape of the IPC response, which the Graph
+  harness does not exercise because the real project has no unparseable files.
+- The 1,000-file timings are from one machine and are **not** a benchmark.
+
+### Verification
+
+`npm run verify` green: **65 files, 1258 tests** (from 64/1235). The Graph
+capture harness still exits 0 with **zero console errors**, and the real project
+is unchanged at **37 files, 46 edges, 4 unreferenced** — so the extractor fix
+altered the broken-file path without disturbing the good one.
+
+### Decision
+
+**D47** — refuse to overwrite, survive one broken file, refuse a file where a
+folder is expected.
 
 ---
 

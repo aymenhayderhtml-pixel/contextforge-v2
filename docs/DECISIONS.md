@@ -1250,3 +1250,68 @@ together against a real game project.
    the flow's behaviour once a project is actually generated.
 
 ---
+
+---
+
+## D47. A generator refuses to overwrite, and an extractor survives one bad file
+
+**Context.**
+1. Phase 5e asked for the empty graph, a 1,000-file graph, and broken folders to
+   be tested and whatever breaks to be fixed. A subagent probed all three
+   empirically — by writing throwaway projects and running the real functions,
+   not by reading them — and found two defects that reading had not.
+2. **`generateProject` destroyed work.** Its doc comment claimed *"Existing files
+   are never overwritten: a generator that silently replaces a developer's
+   `prefabs/cube.ts` would be a data-loss bug"*. There was no check making that
+   true; `writeFileSync` ran unconditionally. Generating twice over an edited
+   folder silently replaced three files with the template. The comment described
+   the intended behaviour and the code did the opposite, with nothing between the
+   two to say so.
+3. **One unparseable file ended the extraction.** `parseJsModule` throws when
+   tree-sitter cannot parse — a half-written file, one saved mid-edit, one in an
+   unexpected encoding. The throw propagated out of `extractJsProject`, so a
+   single bad file out of a thousand produced *no graph at all* and an error
+   naming a file the developer may not have been looking at. Everything else was
+   fine, which is what made it invisible.
+4. A path that exists as a **file** rather than a folder returned
+   `{nodes: [], edges: []}` — byte for byte identical to a real project with no
+   files in it. The missing-folder guard fired; the wrong-kind-of-path guard did
+   not exist.
+
+**Decision.**
+1. `generateProject` refuses **totally**, and does so **before the first write**,
+   naming the conflicting files. Ordering is part of the guarantee: writing one
+   file and then discovering a second exists would leave a partly-written
+   template, and the one already replaced is the one the developer cannot get
+   back. The refusal is total rather than per-file because skipping what it found
+   and writing the rest leaves a *half* template, which is harder to reason about
+   and much harder to undo. Files the generator does not own are irrelevant, so
+   pointing it at a folder that also holds `src/` is fine.
+2. `extractJsProject` catches a per-file parse failure, **skips that file**, and
+   reports it through a new optional `onUnparseable` callback. Skipping rather
+   than substituting an empty contract is the substantive part: an empty contract
+   places the file in the graph with no exports and no imports, which reads as
+   "this file imports nothing" — the plausible-looking wrong answer SPEC R9
+   exists to prevent. Its absence is honest, and the reason is shown.
+3. The callback is a **parameter, not a return field.** `DependencyGraph` is the
+   manifest's public schema; adding a field would change every validator and
+   every canonical hash.
+4. `extractJsProject` now refuses a path that is not a directory, so "missing"
+   and "wrong kind of existing" behave alike. `statSync` is used rather than
+   `existsSync`, returning false on a permission error — a folder the process
+   cannot stat is not one it can read. The one thing this must never do is
+   report a file as a directory.
+5. **Not fixed, measured and logged:** `findCycles` is super-linear — 33× for a
+   10× input — because every detected cycle is canonicalised by
+   `[...cycle].sort().join('|')`, so a 991-node cycle costs O(n log n) to key and
+   there are 99 of them. It is 11 ms at 1,000 files and 34 ms at 2,000, so this is
+   a complexity note rather than an urgent fix. The real change is to work over
+   strongly-connected components, which is a rewrite rather than a patch.
+6. Also verified *not* broken, and recorded so the next person does not re-probe
+   it: an empty project, invalid UTF-8, a directory named `x.js`, a symlink loop
+   (which **terminates** — it was a real hang risk), and every app-layer refusal.
+   A folder **deleted after opening** returns a clean refusal rather than stale
+   data.
+
+---
+
