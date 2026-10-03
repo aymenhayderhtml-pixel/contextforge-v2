@@ -14,10 +14,26 @@ import ProblemsPanel, {
 } from '../../src/renderer/components/ProblemsPanel.svelte';
 import Inspector from '../../src/renderer/components/Inspector.svelte';
 
+/**
+ * How many rows the panel rendered.
+ *
+ * The panel used to own a `Problems (N)` header, which sat underneath the
+ * Scene screen's collapsible `Problems (N)` bar and showed a different N —
+ * `PROBLEMS (2)` over `PROBLEMS (6)`. There is now one header, on the bar, and
+ * this component renders only rows (D44), so the count these tests care about is
+ * the number of `problem-item` elements.
+ *
+ * Asserting row count rather than header text is the stronger check anyway: the
+ * header was a *label* of the count, while the rows are the count itself.
+ */
+function rowCount(body: string): number {
+  return body.match(/class="problem-item/g)?.length ?? 0;
+}
+
 describe('ProblemsPanel component', () => {
   it('renders empty state when there are no problems', () => {
     const { body } = render(ProblemsPanel, { props: { problems: [] } });
-    expect(body).toContain('Problems (0)');
+    expect(rowCount(body)).toBe(0);
     expect(body).toContain('No problems detected');
   });
 
@@ -35,7 +51,7 @@ describe('ProblemsPanel component', () => {
     ];
 
     const { body } = render(ProblemsPanel, { props: { problems } });
-    expect(body).toContain('Problems (2)');
+    expect(rowCount(body)).toBe(2);
     expect(body).toContain('hazardCrate failed to load: Corrupted GLTF buffer');
     expect(body).toContain('Scene contains duplicate id &quot;crate&quot;');
     // Shows Details toggle button for problem with details
@@ -65,10 +81,126 @@ describe('ProblemsPanel component', () => {
       props: { snapshot: snapshot as SceneSnapshot, failed },
     });
 
-    expect(body).toContain('Problems (3)');
+    expect(rowCount(body)).toBe(3);
     expect(body).toContain('hazardCrate failed to load: Corrupted GLTF buffer');
     expect(body).toContain('Scene syntax error at line 12');
     expect(body).toContain('ghost_prefab');
+  });
+});
+
+describe('ProblemsPanel — one header, one count', () => {
+  /**
+   * A minimal *registered* `trackSegment`. Registering it matters: an instance
+   * referencing an unregistered prefab produces its own "Missing prefab" row, so
+   * an empty registry would add a third row to every count below and hide the
+   * duplication these tests are about.
+   */
+  const registeredTrackSegment: PrefabSummary = {
+    name: 'trackSegment',
+    description: 'Asphalt race track segment.',
+    paramsJsonSchema: {
+      type: 'object',
+      properties: {
+        width: { kind: 'number', title: 'Width', min: 0 },
+        length: { kind: 'number', title: 'Length', min: 0 },
+        color: { kind: 'string', title: 'Color' },
+      },
+      required: [],
+      additionalProperties: false,
+    },
+  };
+  /**
+   * The `PROBLEMS (2)` over `PROBLEMS (6)` defect, reduced to its cause.
+   *
+   * `collectProjectProblems` derives errors from `snapshot.problems`. When the
+   * Scene screen also passed that same array as the `problems` prop — which it
+   * did — step 3 and step 4 derived each string twice. Deduplication could not
+   * save it: `createAppError` mints `err:<scope>:…:<random>` when given no id,
+   * so the two copies of one string had different ids and both survived.
+   *
+   * Four rows rendered where two facts existed, and the collapsed bar counted
+   * the raw strings (2) while the expanded panel counted the doubled rows (6).
+   *
+   * These tests pin the fix at both layers: the derivation is not repeated, and
+   * the panel renders one header's worth of rows.
+   */
+
+  function snapshotWithTwoProblems(): SceneSnapshot {
+    return {
+      problems: [
+        'scene.json: instances[0].params.width: value out of range',
+        'Prefab registry could not be loaded',
+      ],
+      prefabs: { prefabs: [registeredTrackSegment], failed: [] },
+      scene: {
+        name: 'GrandPrix_Circuit',
+        instances: [
+          {
+            id: 'track',
+            prefab: 'trackSegment',
+            transform: { position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
+            // Valid params: a bad value would add a genuine third row and the
+            // point of these tests is the duplicate, not the param validator.
+            params: { width: 16, length: 50, color: '#1f2228' },
+          },
+        ],
+      },
+    } as unknown as SceneSnapshot;
+  }
+
+  it('renders no header of its own — the Scene screen bar owns the count', () => {
+    const snapshot = snapshotWithTwoProblems();
+    const { body } = render(ProblemsPanel, { props: { snapshot } });
+
+    // The defect was two headers with two numbers. The panel's is gone.
+    expect(body).not.toMatch(/Problems \(\d+\)/);
+    expect(body).not.toContain('count-badge');
+    // The rows are still here; only the rival header went.
+    expect(rowCount(body)).toBeGreaterThan(0);
+  });
+
+  it('derives each snapshot problem once, not twice', () => {
+    // Exactly the Scene screen's call shape: the same array handed over as both
+    // `snapshot` and `problems`. Each string must yield one row.
+    const snapshot = snapshotWithTwoProblems();
+
+    const { body } = render(ProblemsPanel, {
+      props: { snapshot, problems: snapshot.problems },
+    });
+
+    // Two faults in, two rows out. Before the fix this was four.
+    expect(rowCount(body)).toBe(2);
+  });
+
+  it('still derives the snapshot problems when no problems prop is given', () => {
+    // The negative direction. Suppressing the duplicate derivation must not
+    // suppress the original one — a panel that silently drops real problems is
+    // a worse defect than one that repeats them.
+    const snapshot = snapshotWithTwoProblems();
+
+    const { body } = render(ProblemsPanel, { props: { snapshot } });
+
+    expect(rowCount(body)).toBe(2);
+    expect(body).toContain('Prefab registry could not be loaded');
+  });
+
+  it('a string repeated in both props still yields one row', () => {
+    // The same fault arriving twice by two routes is one fault. This is the
+    // exact shape the Scene screen produced.
+    const snapshot = snapshotWithTwoProblems();
+
+    const { body } = render(ProblemsPanel, {
+      props: {
+        snapshot,
+        problems: [
+          ...snapshot.problems,
+          // The screen's own copy of the same strings.
+          ...snapshot.problems,
+        ],
+      },
+    });
+
+    expect(rowCount(body)).toBe(2);
   });
 });
 
@@ -121,7 +253,7 @@ describe('ProblemsPanel — a skipped instance is listed, not silently absent', 
 
     // It is listed, not hidden and not collapsed away: the panel is where the
     // developer looks after noticing the track is missing from the viewport.
-    expect(body).toContain('Problems (1)');
+    expect(rowCount(body)).toBe(1);
     expect(body).not.toContain('No problems detected');
 
     // **Which instance** — the id, as a selectable link, so it can be jumped to.
@@ -163,7 +295,7 @@ describe('ProblemsPanel — a skipped instance is listed, not silently absent', 
       props: { snapshot: snapshotOf([sceneWithTrackParams(20)]) },
     });
 
-    expect(body).toContain('Problems (0)');
+    expect(rowCount(body)).toBe(0);
     expect(body).toContain('No problems detected');
     expect(body).not.toContain('must be at least 0');
   });
@@ -192,12 +324,11 @@ describe('ProblemsPanel — a skipped instance is listed, not silently absent', 
 
     const { body } = render(ProblemsPanel, { props: { snapshot } });
 
-    expect(body).toContain('Problems (1)');
+    expect(rowCount(body)).toBe(1);
     expect(body).toContain('Width must be at least 0');
     expect(body).toContain('Go to instance track');
     // The valid neighbour produced no row, and the single row belongs to the
     // offending instance only.
-    expect(body.match(/problem-item/g) ?? []).toHaveLength(1);
     expect(body).not.toContain('Go to instance player_kart');
   });
 
@@ -229,7 +360,7 @@ describe('ProblemsPanel — a skipped instance is listed, not silently absent', 
     // The main-process string is passed through as its own row rather than
     // folded into the panel's — so a developer who fixes the value in the
     // inspector still sees the string until the scene is re-read.
-    expect(body).toContain('Problems (2)');
+    expect(rowCount(body)).toBe(2);
     expect(body).toContain('value out of range');
     // And it is the *id* that came out the other end, not the index. This is
     // the assertion that would have caught the bug: the panel's own row already

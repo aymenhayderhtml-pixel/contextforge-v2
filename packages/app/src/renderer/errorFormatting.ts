@@ -388,10 +388,29 @@ export interface CollectProblemsOptions {
 export function collectProjectProblems(options: CollectProblemsOptions): AppError[] {
   const result: AppError[] = [];
   const seenIds = new Set<string>();
+  /**
+   * Content keys already added.
+   *
+   * Id-dedupe alone is not sufficient, and the reason is specific: string
+   * problems are converted with `toAppError`, which calls `createAppError` with
+   * no explicit id, and that mints `err:<scope>:…:<random>`. So the same string
+   * reaching this function by two different routes produces two different ids,
+   * and every fault that arrived twice rendered as two rows. Deduplicating on
+   * what the error *says* — its scope, instance and short text — catches the
+   * second copy regardless of what it was minted with.
+   *
+   * Two genuinely distinct faults still both render: a repeated message across
+   * two instances has a different `instanceId`, and two different messages have
+   * different `short` text.
+   */
+  const seenContent = new Set<string>();
 
   function add(err: AppError): void {
     if (seenIds.has(err.id)) return;
+    const key = `${err.scope} ${err.instanceId ?? ''} ${err.short}`;
+    if (seenContent.has(key)) return;
     seenIds.add(err.id);
+    seenContent.add(key);
     result.push(err);
   }
 
@@ -430,17 +449,45 @@ export function collectProjectProblems(options: CollectProblemsOptions): AppErro
   // an `instances[n]` path becomes that instance's **id**, not its index: a
   // "Go to instance 0" link that selects nothing is worse than no link, and an
   // index shifts every time a line is added above it (SPEC R9).
+  //
+  // When `problems` is a normalized `AppError[]` — which is how the Scene
+  // screen calls this, since it has already scoped every string against the
+  // scene — those entries *are* the snapshot's problems, already resolved. They
+  // are merged in step 4 instead of being derived a second time here.
+  //
+  // Skipping the second derivation is a correctness fix, not an optimisation.
+  // Deriving the same string twice minted two different random ids
+  // (`createAppError` uses `Math.random()` when no id is given), so the
+  // `seenIds` dedupe could never match them and one fault rendered as two rows
+  // with two different instance ids — the `PROBLEMS (2)` over `PROBLEMS (6)`
+  // defect recorded in D44.
   const snapshotProblems = options.snapshot?.problems ?? [];
-  for (const prob of snapshotProblems) {
-    const appErr = toAppError(prob, { scope: 'project' }, instances);
-    add(appErr);
+  const providedAreNormalized =
+    Array.isArray(options.problems) &&
+    options.problems.length > 0 &&
+    options.problems.every((p) => isAppError(p));
+
+  if (!providedAreNormalized) {
+    for (const prob of snapshotProblems) {
+      const appErr = toAppError(prob, { scope: 'project' }, instances);
+      add(appErr);
+    }
   }
 
   // 4. From caller-provided problems array. No scene is passed: these strings
   // were produced outside any snapshot, so an index in one refers to nothing
   // this call knows about, and resolving it would be a guess.
+  //
+  // A raw string that also appears in `snapshot.problems` is skipped. Step 3
+  // already emitted that fault, resolved against the scene; step 4 cannot
+  // resolve it and would emit a second copy under a different scope. The
+  // content-key dedupe above does not catch this pair, because the two copies
+  // differ in `instanceId` — which is the one field that makes the *resolved*
+  // copy the correct one (D44).
+  const snapshotText = new Set(snapshotProblems.map((p) => String(p)));
   if (options.problems) {
     for (const prob of options.problems) {
+      if (typeof prob === 'string' && snapshotText.has(prob)) continue;
       const appErr = toAppError(prob, { scope: 'project' });
       add(appErr);
     }

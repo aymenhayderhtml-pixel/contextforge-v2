@@ -188,6 +188,19 @@
   });
 
   /**
+   * The one problem count for this screen.
+   *
+   * The Problems bar used to read `snapshot.problems.length` — a raw string
+   * array off the IPC snapshot — while the panel underneath counted normalized,
+   * deduplicated rows. Those were two counts of one fact and they disagreed:
+   * `PROBLEMS (2)` above `PROBLEMS (6)` (D44). Worse, the screen handed the
+   * *same* array to the panel as both `snapshot` and `problems`, so
+   * `collectProjectProblems` derived every string twice and its id-dedupe could
+   * not catch it (each copy mints a random id). One list, one length.
+   */
+  const problemCount = $derived(appErrors.length);
+
+  /**
    * Prefab load failures by prefab name, so the outliner can mark a row as coming
    * from a prefab that threw. Matched by name because an instance records only the
    * prefab name.
@@ -485,9 +498,9 @@
         >
           <span class="problems-chevron">{problemsCollapsed ? '▶' : '▼'}</span>
           <span class="problems-title">Problems</span>
-          {#if snapshot.problems.length > 0}
-            <span class="badge problems-badge error-badge" title={`${snapshot.problems.length} problem(s)`}>
-              {snapshot.problems.length}
+          {#if problemCount > 0}
+            <span class="badge problems-badge error-badge" title={`${problemCount} problem(s)`}>
+              {problemCount}
             </span>
           {:else}
             <span class="badge problems-badge zero">0</span>
@@ -502,9 +515,10 @@
           {:else}
             <ProblemsPanel
               snapshot={snapshot}
-              problems={snapshot.problems}
+              problems={appErrors}
               prefabs={snapshot.prefabs.prefabs}
               failed={snapshot.prefabs.failed}
+              count={problemCount}
               onSelectInstance={(id) => store.selectInstance(id)}
             />
           {/if}

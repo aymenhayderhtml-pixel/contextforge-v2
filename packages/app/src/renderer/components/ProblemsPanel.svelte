@@ -52,6 +52,18 @@
     prefabs?: readonly PrefabSummary[];
     /** Optional failed prefabs list */
     failed?: readonly PrefabFailure[];
+    /**
+     * Number of rows this panel will render, asserted by the parent.
+     *
+     * The panel deliberately owns **no** header. It is rendered inside the
+     * Scene screen's collapsible Problems bar, which carries the count; a
+     * second header here showed the same list under two different numbers,
+     * because this panel counts normalized rows while the bar counted raw
+     * strings off the snapshot (D44). The parent's number is passed back in so
+     * this component can still assert its own row count against it rather than
+     * computing a rival one.
+     */
+    count?: number;
     /** Selection callback if a problem references an instance */
     onSelectInstance?: (instanceId: string) => void;
   }
@@ -61,6 +73,7 @@
     snapshot = null,
     prefabs = [],
     failed = [],
+    count: expectedCount,
     onSelectInstance = () => {},
   }: Props = $props();
 
@@ -83,7 +96,23 @@
     collectSkippedInstanceProblems(snapshot, summaries, allProblems.map((p) => p.id)),
   );
 
-  const count = $derived(allProblems.length + skippedInstances.length);
+  /** Rows actually rendered. One list, one length — the bar's count shows this. */
+  const rows = $derived<AppError[]>([...allProblems, ...skippedInstances]);
+
+  const count = $derived(rows.length);
+
+  // Dev-only tripwire. The bar and this list are two renderings of one fact, so
+  // a mismatch means one of them has drifted — the exact defect that produced
+  // `PROBLEMS (2)` above `PROBLEMS (6)`. There is a test for it; this catches a
+  // regression in a real browser run, where no test executes.
+  $effect(() => {
+    if (expectedCount !== undefined && expectedCount !== count && import.meta.env.DEV) {
+      throw new Error(
+        `ProblemsPanel rendered ${count} row(s) but its parent counted ${expectedCount}. ` +
+          'The bar and this panel must derive from one list (D44).',
+      );
+    }
+  });
 
   function toggleDetails(id: string): void {
     expanded = { ...expanded, [id]: !expanded[id] };
@@ -95,18 +124,17 @@
 </script>
 
 <section class="problems-panel" aria-label="Problems">
-  <header class="header">
-    <div class="title-row">
-      <h2>Problems ({count})</h2>
-      <span class="badge count-badge" aria-label={`${count} problems`}>{count}</span>
-    </div>
-  </header>
-
+  <!--
+    No header here. The Scene screen's collapsible bar owns the title and the one
+    count (D44). The dev-only effect in the script block asserts this panel's
+    row count still equals the parent's, so the two can never silently diverge
+    again — which is exactly the bug the duplicate header was.
+  -->
   {#if count === 0}
     <p class="empty">No problems detected.</p>
   {:else}
     <ul class="problems-list" role="list">
-      {#each [...allProblems, ...skippedInstances] as problem (problem.id)}
+      {#each rows as problem (problem.id)}
         <li class="problem-item" data-id={problem.id} data-scope={problem.scope}>
           <div class="problem-row">
             <span class="problem-icon" aria-hidden="true">⚠</span>
@@ -154,30 +182,6 @@
     background: var(--panel, #1e1e1e);
     color: var(--text, #cccccc);
     min-height: 0;
-  }
-  .header {
-    border-bottom: 1px solid var(--line, #333333);
-    padding-bottom: 0.35rem;
-  }
-  .title-row {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-  }
-  h2 {
-    margin: 0;
-    font-size: 0.9rem;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-  }
-  .count-badge {
-    background: #b4553a;
-    color: #ffffff;
-    border-radius: 999px;
-    padding: 0.1em 0.5em;
-    font-size: 0.75rem;
-    font-weight: 700;
   }
   .empty {
     margin: 0.5rem 0;

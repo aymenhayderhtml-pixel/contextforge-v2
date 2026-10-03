@@ -1099,3 +1099,25 @@ together against a real game project.
 8. All proof screenshots for this round are in `screenshots/v04e/` (14 from the patch harness, 18 from `capture-v4.mjs`, plus both JSON reports). Verified with 3 consecutive `npm run verify` runs (59 files, 1157 tests, all green) and two full `scripts/run-e2e-patch.mjs` runs against the real project on disk, both exiting 0 with `consoleErrors: 0`. The target project's two files were confirmed back at their original sha256 afterwards.
 
 
+
+---
+
+## D44. One list, one count: the Problems bar owns the header, and dedupe keys on content rather than a random id
+
+**Context.**
+1. The Problems UI showed two headers over one list: a collapsible bar reading `PROBLEMS (2)` and, expanded beneath it, the panel's own `PROBLEMS (6)`. Three separate derivations of one fact existed. The bar counted `snapshot.problems.length` — a raw `string[]` straight off IPC. The panel counted normalized `AppError` rows. The Outliner consumed a third list, `appErrors`, built inline in the screen.
+2. The two numbers differed because `SceneScreen.svelte` passed **the same array twice** to `ProblemsPanel`: once as `snapshot` (whose `.problems` the collector reads) and again as the `problems` prop. `collectProjectProblems` derived each string at step 3 (resolved against the scene, so `instances[0]` became the real id) and again at step 4 (no scene passed, so the index stayed literal).
+3. The existing dedupe could not catch it, and the reason is the actual defect. Deduplication keyed on `err.id`, but string problems are converted by `toAppError` → `createAppError`, which **mints a random id** when given none (`errors.ts:41`, `Math.random().toString(36)`). Two derivations of one string therefore had two different ids and both survived. Two genuine faults about the same instance, and one genuine fault seen twice, were indistinguishable to that check.
+
+**Decision.**
+1. `ProblemsPanel` no longer renders a header. It is a list of rows; the Scene screen's bar is the single header and the single count, driven by one `$derived` (`problemCount = appErrors.length`) — the same list the Outliner badges from, so the bar, the panel and the outliner can no longer disagree.
+2. `collectProjectProblems` dedupes on **content** (`scope` + `instanceId` + `short`) in addition to id. This is what actually fixes the doubling: it catches a repeated fault regardless of what id it was minted with. Two distinct faults survive — a repeated message across two instances has a different `instanceId`, and two different messages have different `short` text.
+3. Step 3 skips its derivation when `problems` is already a normalized `AppError[]` (the shape the screen passes), and step 4 skips any raw string already present in `snapshot.problems`. Both are separate guards because the two copies differ in `instanceId` — the one field that makes the *resolved* copy the correct one — so content-keying alone cannot merge them.
+4. The panel takes a `count` prop and throws in DEV when it renders a different number of rows than its parent counted. Two renderings of one fact, mechanically pinned together; the unit test covers CI, the tripwire covers a real browser run where no test executes.
+5. Seven existing assertions on the header string `Problems (N)` were rewritten as counts of `problem-item` elements. This is the stronger assertion — the header was a label of the count, the rows are the count — and it is what made the duplication visible in the first place.
+6. Two fixture bugs were found while writing the regression tests and are worth recording, because both would have produced a test that passed for the wrong reason: an unregistered prefab adds a legitimate "Missing prefab" row (inflating the count), and a schema narrower than the instance's params flags `length` and `color` as unknown keys (inflating it further). The fixture now registers `trackSegment` with the full property set.
+
+**Also settled in this phase — the `Corrupted GLTF buffer` error.** It is neither a bad asset nor a loader bug: `kart-dash-3d-v2/prefabs/hazardCrate.ts:19` is a literal `throw new Error('Corrupted GLTF buffer: failed to decode geometry')`, a deliberate SPEC R9 fixture exercising the loud-failure path. It loads no file. The real glTF importer lives in the *parent* `dark matter` repo (`Engine/Assets/src/GltfImporter.cpp`), which maps all ten `cgltf_result` codes to distinct strings, distinguishes parse failure from `cgltf_load_buffers` failure, and is covered by `Tests/test_asset_pipeline.cpp` cases for a nonexistent path and a missing texture. Nothing to fix in either direction; the message is a simulation, and `docs/` should say so so nobody debugs a loader that was never involved.
+
+---
+
