@@ -88,3 +88,12 @@ tmp/
 # and it records the absolute path of the machine that produced it. Kept on disk,
 # not published.
 packages/screenshots/
+
+# ── One-off debugging scratch ────────────────────────────────────────────────
+# `bprobe.mjs` is a hand-run esbuild/import probe kept while wiring prefab
+# bundling; the two root PNGs are ad-hoc captures that predate screenshots/.
+# Nothing in the source, the scripts, the tests or the docs refers to any of
+# them. Kept on disk, not published.
+bprobe.mjs
+/kart-scene-screenshot.png
+/scene-screenshot.png

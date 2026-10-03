@@ -1,0 +1,19 @@
+{
+  "projectPath": "<project-path>",
+  "gameUrl": "http://127.0.0.1:5173/",
+  "targetInstance": "player_kart",
+  "requestedPosition": [
+    4.5,
+    1.25,
+    -6.75
+  ],
+  "appSavedPosition": null,
+  "before": null,
+  "afterEdit": null,
+  "afterUndo": null,
+  "sceneSha256Before": "fc13ff053a8536676e0f26cde1a62cc0ced374ab58c9ec4deb219faef1b0c49d",
+  "sceneSha256After": "fc13ff053a8536676e0f26cde1a62cc0ced374ab58c9ec4deb219faef1b0c49d",
+  "sceneRestored": true,
+  "screenshots": [],
+  "consoleErrors": []
+}

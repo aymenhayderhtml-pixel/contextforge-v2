@@ -1,0 +1,1101 @@
+# Decision log
+
+Each entry records a choice, what it replaced, and why. "Why" matters more than
+"what": a decision whose reasoning is gone cannot be revisited without
+re-deriving it, which is exactly what this project is trying to help developers
+avoid.
+
+---
+
+## D1. Native tree-sitter rather than `web-tree-sitter`
+
+**Context.** SPEC R5 requires real syntax trees for JS, TS and GDScript.
+v1 used line-by-line regexes, which silently missed multiline declarations,
+`export { a as b }`, star re-exports, and any comment containing the word
+`export`.
+
+**Options considered.**
+
+1. `web-tree-sitter` + prebuilt `.wasm` grammars.
+2. Native `tree-sitter` 0.22.x + the three grammar packages.
+3. Keep regexes and add test cases.
+
+**Decision: native (option 2).**
+
+**Why.** Option 1 was implemented and measured first. The prebuilt grammar set
+(`tree-sitter-wasms` 0.1.13) ships 38 languages — JavaScript, TypeScript, TSX,
+HTML, JSON — and **no GDScript**, which is half of this app's target engines.
+Pairing it with a matching runtime (web-tree-sitter 0.25.x, verified working)
+meant keeping two ABI versions in step by hand; the mismatched pairing fails at
+load with an opaque `getDylinkMetadata` error that says nothing about the cause.
+
+Option 3 is the thing to avoid: it is how v1 ended up with a contract extractor
+that reported a commented-out `export function fake()` as real API.
+
+**Cost accepted.** Native grammars mean core cannot run in a browser. Core is
+headless by rule (R3) and the renderer only needs JS/TS/JSON, so the wasm
+runtime remains the right tool for Step 3's viewer. Both paths are recorded in
+SPEC.md §7.
+
+**Verified before adopting:** all three grammars parse in one runtime under Node
+22, and a missing GDScript body colon is detected from the tree (D4).
+
+---
+
+## D2. Import resolution in core rather than `madge`
+
+**Context.** v1 delegated import graph resolution to `madge` (which itself uses
+`dependency-tree` + a detective plugin), while parsing exports with its own
+regexes. Two parsers, two views of the same file, and a dependency whose
+behaviour we did not control.
+
+**Decision.** Resolve imports in `extract/js.ts` from the same tree-sitter parse
+that reads the exports. Module resolution follows Node's rules closely enough
+for game projects: relative specifiers resolve against the importing file, and
+an extensionless or directory specifier is probed for the usual extensions.
+
+**Why.** One parse, three answers (imports, exports, asset references). It also
+removes a dependency and makes the graph's source of truth a single parser.
+
+**Cost accepted.** We are not a complete Node resolver. Extensionless deep
+imports through a custom `exports` map are out of scope, because a game project
+does not use them and a half-implemented `exports` algorithm would be worse than
+none. This is recorded as a known limitation, not hidden.
+
+---
+
+## D3. An ambiguous snippet is refused, never guessed
+
+**Context.** `findTargetMatch` is a ladder of passes from exact match to fuzzy
+anchors. A permissive finder applies an AI's patch to the wrong lines; a strict
+one rejects everything an LLM produces, since models reformat snippets from
+memory.
+
+**Decision.** Each pass reports *how many* places it matched. More than one is a
+refusal with the count, on every pass including the loosest.
+
+**Why.** A wrong patch is discovered when the game misbehaves, or not at all. A
+refusal is discovered immediately and is fixed by asking the AI for more
+surrounding context. The asymmetry favours refusal, and the count in the error
+tells the developer exactly what to do next.
+
+**Cost accepted.** A legitimately ambiguous patch needs a second round-trip. That
+is the intended behaviour, not a limitation to optimise away.
+
+---
+
+## D4. Two checks for GDScript, because the grammar accepts one bad case
+
+**Context.** v1 hand-wrote a GDScript syntax scanner (delimiter balance, string
+termination, block-header colons). It worked but false-flagged three common
+constructs, and each needed a test pinning it down: hex colour literals
+(`"#ff00ff"` — the `#` looked like a comment), Windows paths (`"C:\\..."`), and
+triple-quoted docstrings containing delimiters and fake function signatures.
+
+**Decision.** Use tree-sitter for the general check, and add one targeted check
+for the case the grammar misses: `func f()` with no body. The GDScript grammar
+parses it as a valid `function_definition` with no `body` child, even though
+Godot rejects it.
+
+**Why.** The generic path inherits tree-sitter's error reporting and is immune to
+all three false-positive classes, with no bespoke scanner to maintain. The one
+real gap is closed structurally — "a `function_definition` node with no `body`" —
+rather than by scanning lines, so it stays correct for tab- and space-indented
+files and for nested functions.
+
+**Verified.** Both directions are tested: the missing colon is rejected with its
+line, and hex colours, Windows paths and triple-quoted docstrings pass.
+
+---
+
+## D5. An all-or-nothing patch write
+
+**Context.** A patch may touch four files, and the syntax pre-check may reject
+one of them after the others have been computed.
+
+**Decision.** Apply every block to in-memory buffers, run the pre-check on each
+file's final content, and only then write. A rejection writes nothing.
+
+**Why.** A partially-applied patch is the worst outcome: the developer cannot
+tell which half landed, and the file that did change is now inconsistent with
+the file that did not. All-or-nothing costs nothing — the buffers are already
+built — and removes the ambiguity entirely.
+
+**Cost accepted.** One broken file blocks a patch that would otherwise have been
+mostly fine. `applyAnyway` exists for exactly that case, and is never the
+default.
+
+---
+
+## D6. `before: null` means "did not exist"
+
+**Context.** Undo has to restore files. Most edits change content; some create a
+file; some delete one.
+
+**Decision.** `FileChange` carries `before` and `after`, where `null` means the
+file was absent. Undo writes `before` (`null` → delete); redo writes `after`.
+
+**Why.** Creation and deletion are the same edge cases as editing, and getting
+them wrong loses work silently. One representation covers all three cases, so
+there is no special path to get wrong.
+
+---
+
+## D7. Zod over Ajv, and `.strict()`
+
+**Context.** v1 validated the manifest with Ajv against a JSON Schema file.
+The v2 plan requires Zod for `scene.json`.
+
+**Decision.** Zod for both the manifest and the scene, with `.strict()` on every
+object schema.
+
+**Why.** One validation technology for the whole project, and the manifest type
+is inferred rather than hand-maintained against a schema file — the two can no
+longer drift. `.strict()` matters for the *primary* consumer: an AI writes these
+files, so a typo'd key must fail loudly. Zod's default is to strip unknown keys,
+which would hide exactly the bug worth catching.
+
+**Cost accepted.** Zod's inferred output includes explicit `undefined` for absent
+optional keys, which under `exactOptionalPropertyTypes` needed `| undefined` on
+the optional fields in `graph/types.ts`. That is a real ergonomic cost of taking
+R1 and R6 together; it was cheaper than dropping either.
+
+---
+
+## D8. Injected time, no `Date.now()` in extracted data
+
+**Context.** SPEC R8 requires two extractions of one project to be byte-identical.
+v1 used `Date.now()` for history ids and timestamps.
+
+**Decision.** `recordHistoryStep` takes `now` as a parameter, defaulting to
+`Date.now()`. `buildManifest` takes `generated_at`. Extracted graph data contains
+no timestamps at all.
+
+**Why.** Determinism is what makes the graph safe to hash, diff and cache — and
+it is what lets the tests assert equality of two runs rather than eyeballing
+them. Defaulting the parameter keeps callers simple while letting tests be exact.
+
+---
+
+## D9. `packages/app` is not created yet
+
+**Context.** The build order puts the UI shell at Step 4.
+
+**Decision.** Step 1 ships `packages/core` only.
+
+**Why.** An empty app shell would be an untested claim that the monorepo works,
+and it would need Electron plus a Vite/Svelte toolchain installed and verified
+before the engine underneath it is finished. Core is the part everything else
+depends on, and it is fully testable headless — which is also what proves the
+workspace boundary is real.
+
+**Cost accepted.** The `tsconfig.json` solution currently references one project.
+Adding `packages/app` in Step 4 is a one-line change.
+
+---
+
+## D10. v1 test coverage ported by behaviour, not by line
+
+**Context.** v1's tests were hand-rolled scripts with a `test(name, fn)` helper,
+run by a shell chain in `package.json`.
+
+**Decision.** Ported as Vitest suites, asserting the same behaviours. Where v1
+asserted a *regex artefact* — "the contract contains the string `default`" when
+the regex produced a bare `"default"` with no binding name — the assertion now
+states the real signature (`default function main()`).
+
+**Why.** The v1 assertion encoded the bug. Porting it verbatim would have locked
+in the behaviour D1 set out to fix. The behaviours that matter — node discovery,
+dependency edges, signals, exported vars, private functions excluded, scene
+inheritance, autoload edges, determinism — are all still asserted.
+
+**Not ported, deliberately:**
+
+- *HTTP endpoint tests* (`/history/status`, `/history/undo`, `/save-file`,
+  `/add-from-clipboard`). These exercise Express routes, which belong to the app
+  shell. The behaviours they covered are tested directly against core functions.
+- *Console diagnostics tests* (`isErrorLine`, server log buffers). Server
+  infrastructure with no equivalent in v2.
+- *Context compiler, diff drawer, and outline/scoped-snippet tests*. Those are
+  Step 2 and Step 4 features; `graph/reverse.ts` covers the graph queries they
+  were built on, and the scoped-prompt compiler is not yet written.
+
+---
+
+## D11. Vendored bundles are excluded from extraction
+
+**Context.** The smoke test runs core against the real v1 repository. It took
+**19 seconds** to extract 109 nodes. Profiling showed the cost was concentrated in
+two files: `public/vendor/three.min.js` at 8.5s and `public/vendor/GLTFLoader.js`
+at 4.8s. `GLTFLoader.js` is unminified third-party code; the minified bundle is
+740KB on one line.
+
+**Decision.** Exclude by filename pattern (`.min.js`, `.bundle.js`, `.umd.js`,
+`*-lock.js`) and by directory (`vendor`, `three`), in the filesystem walk rather
+than in the extractor, so both engines benefit.
+
+**Why.** These files are not the developer's code. No AI may be asked to change
+them, and their "contracts" are unreadable — thousands of minified exports that
+mean nothing to a reader. Extraction now takes **5.6s**, and the remaining time
+is spread thinly across 92 real source files with no pathological case left.
+
+**Why the walk and not the parser.** The parser is the wrong place: it would have
+to load the file to know its size, which is the expensive part. The filename is
+free to check.
+
+**Cost accepted.** A developer who *wrote* a file called `something.min.js` and
+wants it in the graph cannot get it there. That is a real but narrow loss, and
+renaming the file is a worse outcome than the one being avoided.
+
+**Guard.** A test builds a synthetic multi-megabyte `.min.js` and asserts
+extraction stays fast, so the regression cannot return unnoticed.
+
+---
+
+## D12. `layerNodes` accounts for every node
+
+**Context.** `layerNodes` assigns each node a topological layer so the Context
+screen can show a build order. It excludes cyclic nodes. The smoke test asserted
+`layers.flat().length + cyclic.length === nodes.length` — and it failed, losing
+**two** nodes from a 106-node graph.
+
+**Decision.** Nodes downstream of a cycle are now also reported in `cyclic`,
+because nothing downstream of a cycle can be honestly ordered either. Any node
+still unplaced when the loop ends is reported too, never dropped.
+
+**Why.** A node silently missing from both lists is invisible: the build order
+would be wrong and nothing would say so. An explicit "these N files cannot be
+ordered" is a correct, actionable statement. The invariant is now asserted across
+four graph shapes, including the empty graph and a self-import.
+
+**Found by** the real-project smoke test, not by any unit test — a reminder that
+the fixtures were too kind.
+
+---
+
+## D13. A parser per language, created once
+
+**Context.** `tryParse` originally constructed a `Parser` and called
+`setLanguage` on every call.
+
+**Decision.** Cache one parser per language for the process.
+
+**Why.** Grammar loading is the expensive part. Reusing parsers took a single
+small-file parse from ~40ms to ~2ms.
+
+**Measured honestly, though:** this was *not* what fixed the 19-second
+extraction. D11 was. Caching is still correct and kept — it is simply not the
+lever it looked like when the number was large.
+
+**Not done, deliberately.** The 0.22 native binding exposes no explicit tree
+`delete` (checked at runtime), so trees rely on the garbage collector. No manual
+freeing was invented to work around a missing API; a smoke test extracts the
+whole real project repeatedly to show this is not a problem in practice.
+
+---
+
+## D14. tree-sitter 0.22 must be rebuilt as C++20 for Electron
+
+**Context.** Core parses with *native* tree-sitter (D1), so the app shell in
+Step 4 needs those `.node` modules inside Electron. Native addons are compiled
+against a specific ABI: a build that works under `node` refuses to load under
+Electron.
+
+**Decision.** `npm run rebuild:native` first runs
+`scripts/patch-tree-sitter-cxx.mjs`, which raises tree-sitter 0.22.4's binding.gyp
+from `-std=c++17` to `gnu++20`, then invokes `electron-rebuild`.
+
+**Why.** Electron 44 ships V8 12.4+, whose headers require C++20. tree-sitter
+0.22.4 hard-codes C++17, so the rebuild fails with a wall of errors that never
+mention the standard:
+
+```
+error: invalid use of incomplete type
+       'class cppgc::internal::ConditionalStackAllocatedBase<node::ObjectWrap>'
+```
+
+Every one of those errors is a *consequence* of compiling C++20-dependent
+headers as C++17, so the log gives no hint at the actual cause.
+
+**Why a script rather than a patch.** A hand-edited `node_modules` is silently
+reverted by the next `npm install`, after which the rebuild fails on a machine
+that did nothing wrong. The script is idempotent and runs automatically.
+
+**Verified:** `npm run check:native` runs from a clean `binding.gyp` and both
+the JavaScript and GDScript grammars parse inside the Electron main process.
+
+**Two environment notes, recorded because they will bite again.** `NODE_ENV` is
+`production` on this machine, which makes `npm install` skip devDependencies
+entirely — Electron must be installed with `NODE_ENV=development npm install
+--include=dev`. And the check runs with `--no-sandbox`, because the bundled
+`chrome-sandbox` helper ships unprivileged and Chromium refuses to start without
+it. Neither affects the shipped app.
+
+---
+
+## D15. A scene edit is refused, not thrown, when it breaks an invariant
+
+**Context.** `saveScene` re-validates before writing, which is what guarantees
+the file on disk is always a scene that would load. But an edit can pass every
+local check and still break an invariant — adding an instance under a parent
+that does not exist is the clear case.
+
+**Decision.** `applySceneEdit` attempts the write inside a try and converts the
+failure into the same `{ ok: false, error }` refusal every other edit returns.
+Nothing is written and no history step is recorded.
+
+**Why.** The caller is the Modeling screen, mid-interaction. An exception thrown
+across the UI boundary for a condition the developer caused is not an error, it
+is a message — and a screen that throws instead of reporting leaves the
+developer with no idea which edit failed or why.
+
+**Cost accepted.** The error text arrives as a thrown-and-rescued string rather
+than a typed validation result. Reshaping it would mean the write path returned a
+union of two failure kinds for no benefit at the one call site that exists.
+
+---
+
+## D16. The boundary checker needs two different string masks
+
+**Context.** `check:boundaries` enforces R3/R4 mechanically, so it is the only
+thing standing between core and a `three` import. Step 2 added the project
+template generator, which emits a whole `loadScene.ts` **inside a template
+literal** — and that generated module imports Three.js. The checker read it as
+core's own import and failed the build on correct code.
+
+**Decision.** Two masks over the same scanner. The **import** scan keeps
+single- and double-quoted contents (that is where the specifier lives) but blanks
+template literals. The **DOM global** scan blanks every string, because prose
+inside a string is where its false positives come from.
+
+**Found by** breaking it. The first attempt reused the DOM mask for both. That
+silently reduced `from 'three'` to `from ""` and the import check detected
+**nothing at all** — no Three.js, no `electron`, no `@contextforge/app` — while
+the repository stayed green. Nothing in `verify` noticed, because the checker
+was passing by construction rather than by working.
+
+**Guard.** `packages/core/test/boundaryCheck.test.ts` now drops a probe file
+into core and asserts both directions: each forbidden import form is still
+flagged, and generated source inside a template literal is still not. A
+mechanism that has no test is a mechanism that will be broken silently.
+
+---
+
+## D20. Shared `AppError` model, strict instance scoping, and browser ES module prefab bundling (Step 3b)
+
+**Context.** In Step 3, the Modeling viewer loaded fallback meshes via `createDefaultMesh` when prefabs were not bundled into the renderer, errors lacked a unified structure across the renderer, and inspector errors were not scoped to the selected instance.
+
+**Decision.**
+1. **Shared Error Model:** Created `packages/app/src/errors.ts` defining `AppError { id, scope: 'instance' | 'field' | 'project', instanceId?, fieldPath?, short, details }` with pure query helpers (`errorsForInstance`, `errorsForField`, `projectErrors`).
+2. **Real Prefab Execution:** Deleted `createDefaultMesh`. Prefabs in `prefabs/` are bundled with esbuild into a browser ES module, loaded dynamically into the renderer viewport registry, and instantiated with Three.js passed in. A throwing prefab creates a red placeholder box and emits an `AppError`. Added tree parity test for `kart` against game prefab output — which compared the prefab against itself and proved nothing; D22 replaced it with a real comparison against the untouched v1 file.
+3. **Error Formatting & Instance Scoping:** Errors are displayed as single concise lines with an expandable Details toggle for stack traces and file paths. Param validation errors (e.g. `Width = -10`) appear directly under their respective input field. The inspector filters strictly by `instanceId` so selecting an instance displays only errors that belong to it. Project-level problems are displayed in a dedicated collapsible `Problems (N)` panel.
+4. **Layout Consolidation:** Added resizable pane splitters with bounds checking, text truncation with ellipsis and full tooltips (no horizontal scrollbars), compact single-row X/Y/Z vector inputs, collapsible inspector sections, a single-row merged header toolbar, and unsaved changes indicators.
+5. **Project Screen Affordances:** Added a native folder Browse button, persistent recent projects list, path display, cleaned sidebar with coming-soon tooltips for inactive screens, and 2-line placeholder summaries for Context and Patch screens. (The Browse button did **not** work when this entry was written — see D21, which replaced the mechanism behind it.)
+
+---
+
+## D21. `File.path` is gone, so the folder picker became an IPC request (Step 3c)
+
+**Context.** D20 added a "native folder Browse button". It did not work. It was
+a visually hidden `<input type="file" webkitdirectory>` read for `File.path`, and
+that property does not exist: Chromium never exposed it under that shape, and
+Electron has deprecated `File.path` outright since v32 — so under the
+`sandbox: true` this app ships with (D20, `main.ts`) the button silently did
+nothing. It looked complete in a screenshot and had never once opened a dialog.
+
+**Decision.** Removed the `<input webkitdirectory>` entirely and added a typed
+`project:pick-folder` request whose response is `Result<string | null>`. The
+handler calls `dialog.showOpenDialog({ properties: ['openDirectory'] })` in the
+main process and returns the chosen absolute path, or `null` on cancel.
+
+**Why a request rather than any renderer trick.** The renderer has no `fs`, no
+`path`, and — under `sandbox: true` — no `File.path`. There is no correct way to
+recover a folder path from inside the renderer, so the only honest fix is to ask
+the process that *does* own the filesystem. This is the same rule the rest of the
+app already follows (D20, `ipc.ts`), and it costs nothing in security posture:
+the request carries **no argument**, so the renderer cannot name a path. It can
+only ask for a dialog and receive what a human chose inside it.
+
+**The dialog is injected, not imported.** `AppBackend` still imports no Electron
+at module level — that is load-bearing, because it is what lets a test drive the
+whole backend headlessly. `main.ts` passes `{ picker }`, and the picker resolves
+`dialog` at call time rather than capturing the module, because `dialog`
+throws before `app.whenReady()` and the backend is constructed at module scope.
+A second optional options-object parameter was used instead of a positional
+because `send` is required and the picker is an optional capability.
+
+**Cancel is `ok(null)`, never `fail()`.** A user who dismisses a dialog did
+nothing wrong. An empty `filePaths` is treated as a cancel too, because some
+platforms report a window-manager dismissal that way and the same gesture must
+not sometimes look like a cancel and sometimes like an error. A cancel produces
+**no notice and no error UI at all** — an error toast for "I changed my mind" is
+noise that trains developers to ignore toasts.
+
+**Guard.** `packages/app/test/shell/pickFolder.test.ts` (21 tests) covers the
+mocked dialog, cancel-by-flag, cancel-by-empty-array, a throwing dialog becoming
+a refusal for *both* the synchronous-throw and rejected-promise shapes, the
+store-level path pushing no notice, and the rendered markup containing no
+`webkitdirectory` and no hidden file input. `registerHandlers`' existing
+"every channel in `CHANNELS` must have a handler" check is what forces the
+handler to exist the moment the channel was added.
+
+**Not proven.** No dialog was ever opened: there is no display here. Whether
+`canceled` is *always* set alongside an empty `filePaths` is untested, and on
+macOS the panel is deliberately not parented to a window (`getFocusedWindow()`
+is unreliable under `sandbox: true`), so it appears as an app-modal panel rather
+than a sheet. Both are worth confirming on real hardware.
+
+---
+
+## D22. Parity is against the untouched v1 file, not against the prefab (Step 3c)
+
+**Context.** The existing `realPrefabs.test.ts` claimed to check kart parity, but
+it compared `prefab.create()` against `prefab.create()` — the same function on
+both sides. It also pinned a hard-coded `31` child count and covered exactly one
+character. It was a tautology that would have passed against a prefab that had
+drifted arbitrarily far from the game.
+
+**Decision.** The test now imports v1's `src/kart.js` (`buildMesh`/`buildDriver`,
+read-only, never edited) and compares, for **4 character × headgear combinations**
+(`dash`/`helmet`, `dash`/`cap`, `luna`/`cap`, `rex`/`helmet-full`):
+
+- every node's **name**, at every level;
+- **child count** at every level, plus total node count;
+- a **per-node bounding box** (`Box3` per node, not just the root);
+- the animated handles (`wheels[].pivot`, `steeringWheel`, `exhaustGlows`,
+  `starRing`) the game's `update()` addresses;
+- the exhaust glow's **canvas draw instructions**, compared against v1's own
+  recorded instructions rather than a hand-written copy.
+
+**How v1 is loaded, and why it is not an import.** v1 has no `node_modules`, and
+its path contains a space, so neither a plain `import` nor `import.meta.resolve`
+works. v1's `kart.js` is bundled with esbuild (`platform: 'node'`, `format:
+'esm'`, `nodePaths` pointing at the host's `three@0.180.0`), written to a temp
+`.mjs`, and imported with a cache-busting `?v=<n>` suffix — the same
+`importFresh` pattern `prefabLoader.ts` already uses. The bundle is what also
+exercises the *real* `buildMesh`, since the `Kart` constructor is called for
+real against a throwaway `{ add() {} }` scene.
+
+**Anti-tautology guards.** The test asserts the two sides' entry points are
+different files, that the viewer built no placeholder, that v1's tree is
+genuinely nested (`Kart_Driver/Driver_Torso` must exist), and that the child's
+paths match. Verified non-vacuous by hand: the prefab builds 31 root children
+(matching v1), and deleting one is detected.
+
+**Result: zero differences.** All 4 combinations match on every axis. The
+parity test found no defect in the prefab, so no prefab fix was needed.
+
+**One real difference remains, deliberately not asserted as parity.** v1's
+`createTexture` sets `wrapS`/`wrapT` = `RepeatWrapping`, `anisotropy` = 4 and
+`colorSpace` = `SRGBColorSpace`; the prefab's browser texture factory leaves
+those at Three.js defaults. These four are texture-sampling state on an
+additive glow sprite whose `map` is drawn identically, so the glow composites the
+same. The test asserts the *material* (which decides whether it composites at
+all) and names the four rather than silently ignoring them.
+
+**Found by breaking it.** `captureFirstDraws` was being called *after* each
+build instead of being handed the log length from *before* it, so
+`slice(undefined)` returned the entire shared draw log. The prefab's "record"
+was v1's 7 instructions plus its own 7 — a 14-vs-7 "difference" that was the
+harness lying. A scratch probe confirmed the prefab draws exactly 7 on first
+create and 0 thereafter (both sides cache the texture in a module-level
+variable). **The lesson is the one D16 records:** the test was passing by
+construction rather than by working, and a mutation probe — not a green run — is
+what distinguishes the two. Both call sites now take the index before the build.
+
+---
+
+## D23. The game builds its karts from `scene.json` through the prefab registry (Step 3c)
+
+**Context.** Kart-Dash-3D's `Kart` class hand-built its mesh in `buildMesh()` /
+`buildDriver()` while the ContextForge prefab registry built the *same* kart in
+`createKart`. Two builders meant the kart the developer previews in the Modeling
+screen and the kart the game drives could silently diverge — the exact failure
+SPEC's whole premise exists to prevent.
+
+**Decision.** `Kart.buildMesh()` now delegates to `createKart`, and the returned
+`parts` (`wheels`, `steeringWheel`, `exhaustGlows`, `starRing`) are assigned to
+the same `this.*` fields `update()` and `reset()` already animated. The duplicated
+geometry is deleted. `src/loadScene.js` (new) builds every instance from
+`scene.json` through the registry, following core's generated-project template
+(`template.ts`'s `loadSceneSource`) rather than inventing a second architecture:
+validate with Zod first, build per instance with `rngFor(seed, id)`, apply
+transform, set `name ?? id`, apply `parent` links in a **second pass** so file
+order cannot decide whether a child attaches.
+
+**Two judgment calls worth recording, because both could have gone the other way.**
+
+*Bad params on one instance do not take down the scene.* `validateScenePrefabs`
+errors are reported with their JSON paths and scoped to the instance they name;
+that instance is skipped and the rest of the scene builds. The shipped
+`scene.json` contains `instances[0].params.width: -10` (the prefab requires
+`.positive()`), so the strict reading — refuse the whole file — would have made a
+single typo in a crate's params remove every kart from the grid. A *structural*
+failure (malformed document, wrong `version`, 2-component position) is still a
+hard refusal: that file does not describe a scene at all, and guessing at one puts
+objects in the wrong place with no error explaining why.
+
+*The track keeps owning the circuit.* `scene.json` declares 5 instances (one
+track segment, one crate, three karts) but `Track` (`src/track.js`) draws the
+whole course and owns `startGrid`, which places all 8 karts. Rebuilding the grid
+from 3 declared karts would delete the game. So `startingGrid()` exposes the
+kart placements the file declares and returns `[]` when it declares none, in which
+case the course-driven grid is used exactly as before. It refuses a **non-uniform**
+scale rather than approximating it, and does **not** apply `scale` to the mesh —
+`KART_SCALE` is already on the mesh, so multiplying would make `scale: 1` a
+1.18×1.18 = 1.39 kart: a plausible-looking wrong kart.
+
+**Verification.** `packages/app/test/scene/gameScene.test.ts` (12 tests) bundles
+the game with esbuild and asserts the required behaviour — **change a kart's
+position in a copy of `scene.json`, load the game's scene-building code, assert
+the kart is at the new position** — plus all 5 instances built (by id, never by
+index), parent links resolving to real descendants in any file order, and
+structural refusals naming the JSON path. It never mutates the real
+`scene.json` on disk.
+
+**Not proven, and this is the largest gap in Step 3c.** **The game has never
+been run.** There is no browser, no display, and no `node_modules` in the game
+project, so `vite` cannot start and **no screenshot exists**. "The game looks and
+behaves the same" is *not* established. What is established is that the kart tree
+`Kart` builds is the same tree `createKart` builds — the parity test compares
+that against the untouched v1 file. Whether `main.js`'s new scene-loading path
+runs at all in a browser is untested.
+
+**Environment gotcha, recorded because it will bite again.** The game project
+has **no `node_modules` and none exists at any level above it**, so
+`import 'three'` from anywhere in the game fails with `ERR_MODULE_NOT_FOUND`.
+Its `package.json` declares `three@^0.160.0`; the only Three.js available is the
+host's `0.180.0`. Every test therefore reaches game code through esbuild
+bundling with `nodePaths`, and the **0.160 → 0.180 version gap is a real,
+unresolved behavioural risk** that a green suite cannot see.
+
+---
+
+## D24. A watcher test may not assert "nothing happened" against a fixed sleep (Step 3c)
+
+**Context.** Step 3c added an esbuild-heavy scene suite. Afterwards
+`backend.test.ts > emits prefabsChanged and rebuilds the registry` began failing
+**intermittently** — green on one run, red on the next two, with nothing in that
+file having been touched. It was not introduced by Step 3c and was not caused by
+it either: removing the new suite made it pass again, which is the only reason
+the trigger could be identified.
+
+**Why.** That test waited a fixed `WATCH_DEBOUNCE_MS * 6 + 400` and then asserted
+an event had arrived. The interval is a **guess** about how long `fs.watch`
+delivery plus an esbuild registry rebuild takes — both of which grow when 46
+vitest workers are competing for CPU. Adding CPU-heavy work elsewhere in the run
+pushes it over. So the test was really asserting *the machine was idle enough*,
+which is never true of a real machine and is only true of a test runner on a
+quiet box.
+
+**Decision.** Added `waitUntil(predicate, timeoutMs, intervalMs)` and converted
+every watcher test that asserts an event **arrived** to poll for it. The test
+now asserts *that the event arrives*, not *that the machine had time*.
+
+Two cases were deliberately **not** converted, and the reason is recorded in the
+code at each site: `does not report its own applyEdit back to the renderer` and
+`stops watching when the project is closed` assert that **nothing** happens.
+There is no condition to poll for, so a bounded sleep is the honest tool there —
+and a negative assertion is not the thing that went flaky. The multi-write
+debounce test polls for the *first* event and then still sleeps, because "exactly
+one" can only be checked once the last possible event has had its chance.
+
+**Found by breaking it.** A single green `npm run verify` proved nothing: the
+first full run after the fix was red, and the suite has to be run **repeatedly**
+before a flake can be distinguished from a pass. Four consecutive clean runs came
+after the change; one clean run before it would have been reported as done.
+
+**Guard.** The failure is not silent — it was a real red run. But a flake in a
+gate is worse than a slow gate, because a red suite that is red for no reason
+trains people to re-run it instead of reading it.
+
+---
+
+## D25. A version gap is enforced by a gate, not by a comment (Step 3d)
+
+**Context.** The game declared `three@^0.160.0` and the viewer used `0.180.0`.
+Nothing complained. The Step 3c parity test still passed — because it bundled the
+game's modules against the **host's** Three.js and so compared 0.180 against
+0.180. The test built to catch a version gap was structurally incapable of seeing
+it.
+
+**Decision.** Pin `three` to the **exact** version `0.180.0` in both
+`packages/app/package.json` and the game's `package.json` (no `^`, no `~`), and
+add `scripts/check-three-pinned.mjs` to `npm run verify` as `check:three`.
+
+**Why pin the *range* away, not just the number.** The caret is the mechanism:
+`^0.180.0` permits any 0.18x, so an `npm install` a month from now can land the
+game on a different Three.js than the viewer, and the symptom is a rendering
+difference nobody can point at. The distinction is invisible in a diff review and
+decisive at runtime, which is the argument for making it a gate.
+
+**What the gate checks**, and why declared and installed are separate: the two
+**declared** versions must be byte-identical; the two **installed** versions must
+be byte-identical. A lockfile disagreeing with its own manifest is a different
+failure from two manifests disagreeing with each other, and the message says
+which. Exit codes are distinct — `0` clean, `1` a violation, `2` an operational
+failure (a manifest or install that does not exist). Exit 2 matters: reporting
+"pinned and identical" about a file that was never read is a claim about nothing,
+and D16 already records a gate that passed by construction rather than by working.
+
+**Guard, proven in both directions.** A synthetic game manifest pinned at
+`0.160.0` is caught (exit 1, naming the mismatch); the same manifest changed to
+`^0.180.0` is caught with three violations (exit 1); a non-existent game root is
+an operational error (exit 2), not a pass. `CF_GAME_ROOT` overrides the path so
+the probe is possible without touching the real project.
+
+**Found by noticing.** The game reached 0.160 → 0.180 with **zero API breaks** —
+it uses only stable surface (`WebGLRenderer`, `Color`, `Vector3`, `Fog`,
+lights, `ShaderMaterial`). The gap was therefore invisible in behaviour too,
+which is the strongest argument for a gate: nothing would have told us.
+
+---
+
+## D26. The Problems panel was blind to a bad param *value* (Step 3d)
+
+**Context.** Step 3d asked for a skipped instance to be visible on both sides. The
+premise — that `AppBackend.paramProblems()` already covered it — turned out to
+be **false**, and the way it was false was specific.
+
+`paramProblems()` checks exactly two things: an **unknown key** and a **missing
+required key**. It never checks a bad *value*. So the one permanent example in
+the repo, `instances[0].params.width: -10`, produced `Problems (0)` /
+`No problems detected.` Meanwhile `SceneScreen.svelte` computes the same
+validation for the **inspector**, and `ProblemsPanel` is driven independently and
+never called it — so the panel (and anything rendering it standalone) was blind
+while the inspector, one screen away, was not.
+
+**Decision.** `ProblemsPanel.svelte` gained an exported pure function
+`collectSkippedInstanceProblems(snapshot, prefabs, existing)` which runs
+`validateInstanceParams` over the scene's instances against the registry
+summaries it already holds, deduplicated by error id against the other sources.
+Exported as a module-level function rather than inlined so a test can assert the
+rows themselves — the Details body is collapsed in server-rendered HTML, so a
+DOM-only test could never see the offending value the row exists to report.
+
+**The duplication is recorded, not hidden.** `SceneScreen.svelte` now computes
+the same pass for the inspector. Two derivations of one fact can drift; extracting
+a shared helper is the right fix and is listed as wanted work rather than done
+quietly.
+
+**Known divergence, stated as a limitation.** `zodToJsonSchema` maps `.positive()`
+to `min: 0`, which is **inclusive**, so the panel accepts `width: 0` while the
+game skips it. A `0` produces a game-console warning and no panel row. Fixing it
+needs an exclusive-bound marker in `FieldSchema` (`ipc.ts`, `prefabLoader.ts`),
+so it is recorded here as a real gap rather than papered over.
+
+**Cost accepted.** Nothing forces the two sides to agree. There is no test
+asserting that the app's row and the game's warning describe the same skip; they
+agree by construction and nothing enforces it if the summary drifts further from
+the Zod schema.
+
+---
+
+## D27. The e2e loop skips by default, and says so out loud (Step 3d)
+
+**Context.** The edit loop needs a real Electron main process, a display, a
+built renderer bundle, a vite dev server for the game, and ~30–60 s of wall clock
+for three page loads and four writes to disk. `vitest.config.ts` fixes
+`pool: 'forks'` and `testTimeout: 30_000`, and that file is shared.
+
+**Decision.** `scripts/run-e2e-edit-loop.mjs` is the real deliverable;
+`packages/app/test/e2e/editLoop.test.ts` is a thin wrapper that (a) asserts the
+runner and harness exist, (b) asserts the harness's **declared exit codes** match
+the ones the runner interprets, and (c) runs the loop for real **only** when
+`CF_E2E` is set and the game dev server answers. The default path **prints a loud
+warning naming what is not proven**.
+
+**Why exit codes are read from the harness's own source** rather than duplicated
+as a constant: a real run reported as passed because `0` came back for the wrong
+reason is the exact failure D24 is about. A changed harness fails the contract
+test immediately.
+
+**What a default `npm test` therefore does *not* prove.** Nothing about the
+app↔game edit loop. The warning says so in those words rather than skipping
+quietly, because a quiet skip is indistinguishable from a test that quietly
+stopped testing.
+
+**Verified for real** by running the runner directly (not the skip path):
+`player_kart` before `[0, 0, 3]` → inspector edit to `[4.5, 1.25, -6.75]` → Save →
+the **game rebuilt** the kart at `[4.5, 1.25, -6.75]` → Undo → Save → game
+rebuilt at `[0, 0, 3]`. `scene.json` sha256 identical before and after.
+
+**Found by breaking it — twice, in two different places.**
+
+1. **Electron's ESM entry point does not support top-level `await`.** The harness
+   exited silently with **no output at all** — not even its first `[stage]` line —
+   because execution stopped dead at `await app.whenReady()`. Confirmed with a
+   four-line probe that printed `MODULE_LOADED` and then nothing. This is the
+   D16 lesson again in a new costume: the failure was invisible, so the only way
+   to find it was to run the thing and notice that silence is not success.
+2. **A green screenshot is not evidence of a green run.** An earlier agent's
+   first capture produced three files that *looked* like races but were
+   post-HMR-reload menu screens. The harness now polls the live `window.__game`
+   state instead of sleeping on fixed timers, so a vite hot reload can no longer
+   masquerade as a race.
+
+**Known limitation, stated as a limitation.** The e2e asserts the position of
+the **built scene object** the game's renderer draws
+(`position.source === 'rendered-object3d'`), not the position of the `Kart`
+instance *while a race is running* — the harness reads before a race begins, so
+`drivingKartPosition` is `null`. The scene-to-object path is proven end to end;
+"the kart on the grid, mid-race, moved" is not.
+
+---
+
+## D28. A pinned dependency can be re-pinned by an `npm install` — so it is checked (Step 3d)
+
+**Context.** Agent 1 pinned the game's `three` to `0.180.0`, but
+`packages/app/package.json` still read `^0.180.0`. The two *resolved* to the same
+version, so nothing failed — and the caret is precisely the thing that lets them
+diverge later.
+
+**Decision.** Pinned `three` and `@types/three` exactly in
+`packages/app/package.json` too, and added the `check:three` gate (D25) to
+`npm run verify`.
+
+**Why this is worth a gate.** The first `npm install` after a dependency is
+pinned still rewrites the lockfile from the manifest. If the manifest says `^`,
+the lockfile is free to drift the next time. The pin is only real when something
+checks it on every run rather than trusting the manifest someone edited once.
+
+**UI note.** `check:three` is a *dependency* gate, not a boundary or prefab gate,
+so it is named separately rather than folded into `check:boundaries` — a failure
+in it means "the two projects disagree about a library version", which is a
+different diagnosis from "core imported the app".
+
+---
+
+## D29. A patch is previewed against a copy of the project, never against the project (Step 4)
+
+**Context.** Core's `writeFileBlocks` / `applyEditBlocks` write as they go. That
+is right for a caller that has already decided to commit, and wrong for two
+things the Patch screen must do: preview a reply, and refuse an all-or-nothing
+apply where one of four blocks fails.
+
+**Decision.** `previewPatch` and `applyPatch` both resolve their reply against a
+`mkdtemp` copy of the project (skipping `node_modules`, `.git`, `dist`), and only
+`applyPatch` then calls `captureAndWrite` on the real tree — re-planning against
+the live project immediately before writing, so the preview and the write cannot
+disagree.
+
+**Why.** "A preview writes nothing" should be true *by construction*, not by
+remembering not to call anything that writes. `applyAnyway` then suppresses only
+the syntax gate, leaving the real project touched exactly once.
+
+**Known limitation.** The copy is O(project size) per preview. A project with a
+large non-excluded asset folder pays that. Excluding more directory names is a
+judgement about what a patch might legitimately target, and was not made here.
+
+---
+
+## D30. A gap the developer can see must also be in the text the AI reads (Step 4)
+
+**Context.** `compileContext` built `prompt` before the handler checked which
+requested files were actually on disk. A missing file therefore appeared in the
+`gaps` list the developer sees and was **absent from the prompt entirely**. The
+developer's screen said "I could not attach `src/nope.js`" while the AI received
+a prompt with no mention of it and no reason to doubt the request was fulfilled.
+
+**Decision.** The not-found files are stated *inside* the prompt, under a
+`## NOT ATTACHED — requested but absent` heading, and the same sentences are
+returned in `gaps` for the screen. One fact, both places.
+
+**Why this one matters more than it looks.** An AI that asked for context and was
+quietly given none is precisely the failure this app exists to prevent — and it
+is invisible, because every individual surface looks correct.
+
+---
+
+## D31. KNOWN GAP — a line number in the trace skips the symbol check (Step 4)
+
+**Context.** Core resolves a target file's section in order: **a line number
+first**, and only if there is none does it look for a named symbol. So a stack
+trace carrying `at foo (src/kart.js:5:11)` produces a slice around line 5 and the
+symbol is never examined — a symbol that does not exist is silently unreported.
+
+**Verified against core directly**, not inferred: same issue text,
+`at totallyAbsentHelper (src/kart.js:5:11)` yields `gaps: []`, while the same
+issue with no line number yields
+`No function named "totallyAbsentHelper" was found in src/kart.js.`
+
+**Consequence.** An AI asking about a symbol that is missing *and* quoted a line
+number gets no refusal. It is told it was shown a function, and that function
+exists — just not the one it asked about.
+
+**Not papered over.** The obvious "fix" in the app layer is to scan the issue for
+`identifier()` patterns and emit a gap when one is not found in the manifest. That
+would invent diagnostics core did not produce, on a heuristic, and report a gap
+for every ordinary mention of a helper name that legitimately lives in a
+dependency rather than this project — worse than the current silence, because a
+signal that is often wrong is a signal developers learn to ignore (SPEC R9).
+
+**Where the fix belongs.** `buildTargetSection` in `compiler.ts`: check the named
+symbol even when a line number produced the slice, and report both when the symbol
+is absent. Core is not this step's file to change, so it is recorded here instead.
+
+---
+
+## D32. Two tests asserted old behaviour rather than correct behaviour (Step 4)
+
+**Context.** Three tests went red when Step 4 landed. In each case the *test* was
+wrong, and in two the wrongness was subtle enough to be worth recording.
+
+- `prefabLoader.test.ts` asserted `size: { min: 0 }` for a Zod `.positive()`,
+  with the comment "an exclusive check reported as a bound, because `FieldSchema`
+  has no way to say *exclusive*". The test had **pinned the bug**. Step 4 added
+  `exclusiveMin`; the assertion had to change to the truth.
+- `screens.test.ts` asserted both screens were placeholders. A test asserting a
+  screen *is* a stub must be deleted the moment it stops being one, and deleting
+  it is exactly when nobody re-reads what it protected. Both now assert the real
+  screen's shape.
+- `problems.test.ts` expected `Go to instance 0` for a snapshot string naming
+  `instances[0]`. That was the documented index-as-id limitation (D26), now fixed;
+  it resolves to `track`, and a link that selects nothing is worse than no link.
+
+**The rule this establishes.** A test that documents a limitation in a comment
+is indistinguishable from a test that documents a *requirement*. When the
+limitation is fixed, only the comment says which one it was. Both kinds must be
+updatable, and the fix must update them.
+
+**Not done:** the `fullFiles` and `savingsPercent` assertions were *also* wrong
+but in the opposite direction — they assumed slicing always shrinks a prompt,
+which is false for files under `MAX_WHOLE_FILE_LINES` (200). Core clamps
+`savingsPercent` at 0 for exactly that reason. See D33.
+
+---
+
+## D33. `fullChars` is not guaranteed to exceed `chars` (Step 4)
+
+**Context.** Two assertions in `handlers.test.ts` required `fullChars > chars`
+and a positive saving. Both fail against a 16-line fixture: core sends a whole
+file anyway once it is under 200 lines, so slicing saved nothing and the two
+figures are equal.
+
+**Decision.** Assert `fullChars > 0` and `savingsPercent >= 0`, and pin the real
+behaviour with a fixture large enough to slice — a >200-line file where
+`fullFiles: true` genuinely adds content.
+
+**Why it matters.** An assertion that slicing always saves bytes sends the next
+person hunting a bug in the compiler that is not there. The figure is a
+comparison, and a comparison of equal things is a legitimate zero.
+
+---
+
+## D34. Four defects that only a screenshot could find (Step 4)
+
+**Context.** Step 4's two screens were unit-tested and green — 55 context tests,
+30 patch tests — and the app was still unusable on launch. Every one of these
+passed `npm run verify`, because all four are invisible to a test that renders a
+component in isolation and asserts on its markup.
+
+**1. `Sidebar` disabled the screens it was supposed to enable.** `isScreenDisabled`
+returned `true` for `context` and `patch` unconditionally, with the tooltip
+"Coming in future steps" — long after both screens were built. Neither screen is
+reachable by clicking. Now gated on `projectName === null`.
+
+**2. `ProjectScreen`'s `$effect` fed itself.** The effect read `snapshot` and
+called `addRecent`, which writes `recents`. Svelte re-ran it, which wrote again,
+until `effect_update_depth_exceeded` killed the render tree — so the project never
+opened, which is what *caused* symptom 1 to be invisible. Fixed with `untrack`,
+which says what is true: this runs on mount, and its own output is not an input.
+
+**3. `ContextScreen`'s `$effect` had the same shape.** `loadBrief` wrote
+`briefMode`, which the mode radios `bind:group`. Same infinite loop, same fatal
+error, reached as soon as the Context screen mounted. Fixed by not writing the
+mode: the file's mode is still *reported* in the brief panel, but the radio state
+belongs to the developer, who is the only one who should change it.
+
+**4. A `<!-- … -->` marker inside a Svelte file comment closed the comment early.**
+The header comment documented where the brief button goes by writing
+`<!-- BRIEF BUTTON SLOT -->` inside itself. The inner `-->` ended the comment, and
+every remaining line of the header rendered as **visible text at the top of the
+screen**. The app looked broken in a way no assertion could see, because the
+markup was correct — it was the comment above it that was wrong.
+
+**Why this is a decision and not an anecdote.** A green suite is evidence about
+the thing the suite measures. These four defects were all *outside* what any of
+the tests measured: navigation gating, an effect's dependency graph, and a
+comment in a header. The only thing that caught them was driving the real app and
+looking at it. Screenshot evidence is a gate like any other — and its absence is
+not evidence, it is a hole in the suite wearing a green tick.
+
+---
+
+## D35. An assertion has to be re-broken before it is believed (Step 4)
+
+**Context.** The regression tests written for D34 passed. Then the bug they
+exist to catch was re-introduced on purpose, and they passed again. A test that
+cannot fail is not a test; it is a comment with a runtime cost.
+
+**What was wrong, in order of how much it would have misled someone.**
+
+1. The `$effect` check scanned only the effect's *body*. The real defect was
+   `$effect(() => { void loadBrief(); })` with the write inside `loadBrief`, one
+   call away — invisible to any amount of looking at the body.
+2. So the rule was widened to "a function the effect calls must not write state
+   the effect reads". That is still wrong, and wrong in the dangerous direction:
+   the effect read **nothing**. Writing a `$state` notifies every effect that
+   reads it, so a write anywhere in the effect's own call chain re-runs it
+   whether or not the body mentions the name. The rule is **write**, full stop.
+3. The assertion was then inverted: `expect(!bound.has(name)).toBe(false)`
+   asserts the name **is** bound, while its failure message said the opposite.
+   The message and the matcher disagreed, so the test failed on correct code and
+   would have been "fixed" by deleting the assertion.
+
+**The rule this establishes.** Before a new structural test is filed, re-break
+the thing it watches and confirm it goes red. Both D34 regressions were checked
+that way and both went red; the `briefMode` one named the right symbol in its
+message, which is the only evidence that it is checking the right thing.
+
+**Why a static check at all.** The real guarantee is behavioural — mount the
+component, see whether it settles — and `svelte/server`'s `render` never runs
+effects, so no component test can do it. A structural check is a second-best
+guard, and like any second-best guard it has to be *demonstrated* to fire, not
+assumed to.
+
+---
+
+## D36. Keyword and runtime-error filtering in symbol extraction (Step 4b)
+
+**Context.** In `packages/core/src/context/compiler.ts`, `symbolFromText` searched
+free text using `/\b([A-Za-z_$][A-Za-z0-9_$]*)\s*\(/` and picked the first match.
+When a user entered common JavaScript error messages such as
+`TypeError: Cannot read properties of undefined (reading 'foo')` or
+`undefined is not a function`, the identifier extracted was `"undefined"`. The
+compiler then looked for a function named `"undefined"`, which failed and emitted
+`No function named "undefined" was found in <file>`.
+
+**Decision.** Added `IGNORED_SYMBOLS` encompassing JavaScript, TypeScript, and
+GDScript keywords, literals, and control flow identifiers (`undefined`, `null`,
+`nan`, `true`, `false`, `while`, `switch`, `catch`, `return`, `throw`, `new`,
+`typeof`, `void`, `delete`, `await`, `yield`, `function`, `func`, `class`, etc.).
+Updated `symbolFromText` to scan across all calls via `text.matchAll`, skipping
+ignored identifiers so real function names are extracted even when preceded by
+runtime error descriptions.
+
+---
+
+## D37. Toast non-intrusive stacking, collapse, and problem routing (Step 4b)
+
+**Context.** Toasts were rendered at the top-right without stacking limits or
+truncation, obscuring page controls and headers. Furthermore, project-level warnings
+and prefab parse errors were broadcast as ephemeral toasts, spamming the user and
+competing with actionable operation feedback.
+
+**Decision.**
+1. Toasts are anchored to the bottom-right corner in a dedicated flex column with
+   `pointer-events: none` on the container and `pointer-events: auto` on toasts.
+2. Resting toasts are truncated to a single line with an ellipsis and an explicit
+   `Dismiss` button. Multiline errors and file paths are hidden behind a `Details` toggle.
+3. Only up to 3 toasts are shown at once; any additional toasts collapse into a
+   `+{N} more` toggle button.
+4. Project-opening problems and failed prefabs are routed directly into `snapshot.problems`
+   and `snapshot.prefabs.failed`, surfaced in the `ProblemsPanel` rather than popup toasts.
+
+---
+
+## D38. Plain-English syntax error translation in Patch preview (Step 4b)
+
+**Context.** When a patch block contained syntax errors, the Patch screen presented raw
+tree-sitter or JSON parser strings (e.g. `MISSING ";"`, `ERROR: unexpected '}'`), which
+read like compiler diagnostics rather than actionable error descriptions.
+
+**Decision.** Added `translateSyntaxError(rawMessage, line, filePath)` in
+`errorFormatting.ts`. It maps common parse errors to plain-language statements with line
+numbers (e.g., `'Line 2: a { is never closed'`, `'Line 5: missing a semicolon ';''`,
+`'Line 5: statement is missing a body (needs a ':' and an indented block)'`). The raw
+parser diagnostic is preserved under an expandable `Details` toggle.
+
+---
+
+## D39. Context Screen reachability: sticky copy bar and collapsible sections (Step 4b)
+
+**Context.** Large prompts in the Context screen required extensive vertical scrolling,
+pushing the `Copy prompt` action out of view. In addition, the five distinct panels
+crowded the screen when inspecting specific parts of context generation.
+
+**Decision.**
+1. Converted all five panels into native `<details class="panel" open>` elements with
+   styled `<summary>` headers and rotating indicator icons.
+2. Added a primary `Copy prompt` button in the action bar immediately adjacent to
+   `Compile prompt`.
+3. Added a sticky bottom floating toolbar (`.sticky-copy-bar`) that remains visible
+   whenever a compiled prompt exists, showing character count, estimated tokens,
+   percentage savings, and an instant `Copy prompt` button.
+
+---
+
+## D40. End-to-end Electron automation for Patch and Brief lifecycles (Step 4b)
+
+**Context.** Unit tests alone could not guarantee that Electron's renderer, IPC bridges,
+patch application, file-system transactions, and multi-file rollback functioned correctly
+together against a real game project.
+
+**Decision.**
+1. Authored `scripts/run-e2e-patch.mjs` and `packages/app/src/electron/patch-harness.mjs`
+   to drive Electron against `kart-dash-3d-v2`. Proves: single EDIT patch apply, byte-for-byte
+   undo (sha256), redo, 2-file patch atomic apply and single-step undo, and bad-block
+   rejection with zero bytes written.
+2. Authored `scripts/run-e2e-brief.mjs` and `packages/app/src/electron/capture-brief.mjs`
+   to verify One-shot and Interactive brief generation, `.contextforge/brief.md` disk
+   contents, `NEED: <path>` detection, and dynamic file attachment in the compiled prompt.
+3. Captured 17 high-definition screenshots in `screenshots/v4b/` and added vitest
+   wrappers in `packages/app/test/e2e/patchLoop.test.ts` and `briefLoop.test.ts`.
+
+---
+
+## D41. Full-source attachment for AI requests, empty issue omission, and distinct visual states (Step 4b verification)
+
+**Context.** When an AI requested a specific file via `NEED: <path>` or `CONTEXT INSUFFICIENT: Need <path>`, large files were truncated to a 200-line outline instead of providing the entire source needed to author a surgical patch. Additionally, compiling context without an issue included placeholder text `[Describe what is wrong]`, and e2e patch screenshots previously lacked distinct visual transitions between apply, undo, and redo.
+
+**Decision.**
+1. In `compiler.ts`, `extractFullAttachmentRequests` scans for `files`, `NEED: <path>`, and `CONTEXT INSUFFICIENT: Need <path>`. All requested files are attached in full (`kind: 'full'`), bypassing the 200-line truncation limit (verified with `src/track.js`). The attachment order is sorted alphabetically so compiled prompts remain strictly deterministic across runs.
+2. If the issue box is empty, the `ISSUE:` section is omitted entirely from the prompt, eliminating placeholder text like `[Describe what is wrong]`.
+3. In `PatchScreen.svelte`, successful patch application maintains the `applied` status while clearing the preview, displaying `<h2>Applied</h2>` and keeping Undo enabled with history counts.
+4. In `patch-harness.mjs`, DOM assertions verify text and button states at every step (`1 step kept`, `Applied`, Undo enabled, Redo enabled, bad block refusal), ensuring identical screenshots fail the test. New proof captures are written to `screenshots/v4c/`.
+
+---
+
+## D42. Executable prefab bundling in renderer, CSP alignment, and Patch/Scene UI polish (Step 4b proof)
+
+**Context.**
+1. Karts and track in the 3D viewport rendered as red wireframe error placeholders rather than real Three.js child meshes because IPC `project:prefabs:scan` returned JSON serializable `PrefabSummary` objects without `create()` functions. Furthermore, dynamic ESM imports of browser-bundled prefab modules in Chromium failed under `script-src 'self'` CSP.
+2. The Scene screen header bar overflowed horizontally with a scrollbar at 1600px width.
+3. The Patch screen showed no distinct indicator when an applied patch was Undone.
+4. The sticky Copy bar on the Context screen could overlap content without bottom padding.
+5. New-file unified diff headers emitted `-0,0` which some parsers reject or format with an unwanted removed line.
+6. Requested file attachments needed explicit size attribution in budget warnings and clear separation from runtime logs.
+
+**Decision.**
+1. Bundled executable browser prefabs via `bundlePrefabsForBrowser(root)` in IPC and loaded them into runtime registry via `loadPrefabBundle` in `Viewport.svelte`. Updated Content Security Policy in both `index.html` and `main.ts` to `script-src 'self' data:` allowing dynamic import of the bundled modules in Electron. Made `SceneScreen.svelte` reactively update its index via `subscribeRegistry`. Added `packages/app/test/viewport/realPrefabs.test.ts` proving kart instances render real child meshes (`isErrorMarker === false`) and only `hazardCrate` is a placeholder.
+2. Formatted Scene header bar with `flex-wrap: wrap; gap: 8px; overflow-x: hidden;` and concise button labels (`Undo`, `Redo`, `Save`, `Reload`) with `aria-label="Save scene"`, eliminating horizontal scrolling at 1600px.
+3. Added an explicit `Undone` state to `PatchScreen.svelte`, rendering `<h2>Undone</h2>` upon reverting changes and satisfying text assertions.
+4. Added `90px` bottom padding to `ContextScreen.svelte` so the sticky Copy toolbar never occludes input or output.
+5. Updated `packages/core/src/patch/diff.ts` so new file additions output `@@ -0,0 +1,N @@` with only `+` lines and `--- /dev/null`.
+6. Updated context compiler to emit `Requested files: ...` separately from `RUNTIME OUTPUT:`, and detailed requested file character weights in over-budget notices.
+7. Recorded all proof screenshots into `screenshots/v4d/` and verified with 3 consecutive `npm run verify` runs.
+
+---
+
+## D43. Truthful syntax messages, file-naming write reports, and screenshots that prove their own state (Step 4e)
+
+**Context.**
+1. tree-sitter records the expected token as the MISSING node's own `type`, but `grammars.ts` read it from the nearest named *sibling before* the insertion — a different question. An unclosed function reported "missing lexical_declaration" (the last thing that parsed) and an unclosed `if` reported "missing if_statement". `errorFormatting.ts` then mapped those grammar names onto fixed phrases, so a missing brace could surface as "expected a return statement": a diagnosis of a construct that was not missing at all. A wrong diagnosis sends the next AI turn and the developer to the wrong file, which is worse than no diagnosis.
+2. `ipcHandlers.undo()`/`redo()` discarded core's `HistoryActionResult` and returned only a re-read `SceneSnapshot`, so `action.paths` never left the main process. The screen could only say "Previous changes were reverted" — a sentence that describes any undo, including one that reverted something the developer did not expect.
+3. `script-src` carried `data:` (added in D42 so generated prefab modules could be dynamically imported). A `data:` URL can carry *any* script, so allowing it in `script-src` hands an injected string the ability to execute, which is exactly what `contextIsolation` and the policy exist to prevent.
+4. The Inspector's `.vector-label` was `6.2rem`, wide enough to squeeze the z axis input to about two characters, and `.pane.inspector` is `overflow-x: hidden` at a 320px default — so a decimal rotation was clipped to something like `3.1`, and the third axis could be pushed past the pane edge entirely.
+5. `capture-v4.mjs` queried `button.problems-header` and `.panel-toggle`, neither of which exists, behind `if (x)` guards that swallowed the miss. `00-problems-panel.png` showed the Problems panel **collapsed** while claiming to show it expanded, and `01b-context-panel-collapsed.png` came out byte-identical to `01-context-collapsible-panels.png`. Two screenshots that proved nothing while looking as though they did.
+6. The applied-state screenshots captured only the 1600x1400 viewport, cutting the History panel off at the bottom, so the step count was never visible alongside the banner it explained.
+
+**Decision.**
+1. `describeMissing` in `grammars.ts` now reads `node.type` — the token tree-sitter actually recorded — with a `PLAIN_NODE_NAMES` map for the grammar names that would otherwise read as jargon, and falls back to the raw type rather than dropping it. `translateSyntaxError` shows the missing punctuation token verbatim (`Line 3: missing }`) instead of paraphrasing it, matching punctuation narrowly so it cannot swallow GDScript's "statement … is missing a body", and passes an already-plain phrase through untouched (the fallback used to rewrite core's "a name or identifier" into "a name or name"). Added `grammars.test.ts` cases for an unclosed function, an unclosed `if`, a missing `)` and a missing operand, each asserting the absent token *and* that the sibling's type does not leak in.
+2. `HistoryActionOutcome` was added to `ipc.ts` carrying `snapshot` plus `paths`/`patchId`/counts; `afterHistoryAction` now threads core's `HistoryActionResult` through instead of dropping it. `store.undo()`/`redo()` resolve to `HistoryActionPaths | null` instead of `boolean`. `PatchScreen.svelte` renders Apply, Undo and Redo through one `writeSummary(verb, files)` helper, so the sentence cannot drift between them, and `applied` is cleared on every history step — the panel is an if/else-if, so leaving it set would show "Wrote …" above a revert that had just put those bytes back. `ShortcutTarget.undo/redo` were widened to `Promise<unknown>`: the keyboard path discards the result, and pinning the exact shape would have made every store change a shortcut-contract change.
+3. `script-src` is now `'self' blob:` in both `index.html` and `main.ts`; `img-src`/`font-src` keep `data:` because those are inert payloads. `loadPrefabBundle` branches on runtime: the renderer builds a `blob:` URL (revoked in a `finally`), while Node — whose ESM loader cannot import a `blob:` URL at all — uses `data:`. The branch is on what the runtime supports, and the CSP is enforced where it applies. `contract.test.ts` asserts `script-src` names `blob:` and does **not** name `data:`, and that `img-src`/`font-src` still do.
+4. `.vector-label` is `8.5rem` (fits `rotation (radians)` uncut), `.axis-field` has a `min-width: 4.5rem`, and the Inspector pane default is 380px. `layout.test.ts` computes the width a transform row needs from the two `rem` values and asserts the pane is at least that wide, so the three inputs cannot be squeezed again.
+5. `capture-v4.mjs` queries the real selectors (`button.problems-toggle`, `details.panel`) and **throws** if the state it is about to photograph is not the state it claims — a missing element is a failed run, not a silent no-op. Because Svelte 5 flushes DOM updates on a microtask, the Problems check polls `aria-expanded` and `.problems-content` rather than sampling in the same tick as the click. The capture also selects an instance and asserts the rotation-z input lies inside the pane, which is what proves the truncation is gone rather than merely narrower.
+6. `patch-harness.mjs` gained `scrollToBottom`, `assertHistoryPanelPresent` and `captureFullPage`. The full-page helper only resizes when the content genuinely exceeds the window — growing a frame that already fits would add empty pixels, not proof. The bad-block case now also asserts byte-identical contents (not just digests), that the *good* block's replacement text is absent (the sharp form of atomicity: one good block plus one bad block must write neither), that Undo is disabled, and that forcing a click on the disabled Apply button writes nothing. The two-file undo asserts byte identity for both files and the literal DOM string `Reverted 2 files: src/modes.js, src/settings.js`.
+7. A bug introduced here and caught by running the app rather than by any test: the store returns `{ paths, patchId }` while the panel reads `.files`, so assigning it straight through made `writeSummary` throw on `files.length` and the Undo message never rendered at all. Fixed by mapping explicitly, and `patchScreenRender.test.ts` now pins the mapping and fails on the bare assignment — SSR never reaches `stepHistory`, so no amount of unit testing would have caught it.
+8. All proof screenshots for this round are in `screenshots/v04e/` (14 from the patch harness, 18 from `capture-v4.mjs`, plus both JSON reports). Verified with 3 consecutive `npm run verify` runs (59 files, 1157 tests, all green) and two full `scripts/run-e2e-patch.mjs` runs against the real project on disk, both exiting 0 with `consoleErrors: 0`. The target project's two files were confirmed back at their original sha256 afterwards.
+
+

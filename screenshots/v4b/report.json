@@ -1,0 +1,81 @@
+{
+  "status": "passed",
+  "failureReason": null,
+  "project": "<project-path>",
+  "screenshots": [
+    {
+      "name": "01-context-resting.png",
+      "path": "<local-path>/contextforge 2/screenshots/v4b/01-context-resting.png",
+      "bytes": 233328
+    },
+    {
+      "name": "02-brief-oneshot-task.png",
+      "path": "<local-path>/contextforge 2/screenshots/v4b/02-brief-oneshot-task.png",
+      "bytes": 151155
+    },
+    {
+      "name": "03-brief-oneshot-built.png",
+      "path": "<local-path>/contextforge 2/screenshots/v4b/03-brief-oneshot-built.png",
+      "bytes": 226785
+    },
+    {
+      "name": "04-brief-interactive-built.png",
+      "path": "<local-path>/contextforge 2/screenshots/v4b/04-brief-interactive-built.png",
+      "bytes": 258709
+    },
+    {
+      "name": "05-reply-need-detected.png",
+      "path": "<local-path>/contextforge 2/screenshots/v4b/05-reply-need-detected.png",
+      "bytes": 165390
+    },
+    {
+      "name": "06-reply-file-attached.png",
+      "path": "<local-path>/contextforge 2/screenshots/v4b/06-reply-file-attached.png",
+      "bytes": 194527
+    }
+  ],
+  "assertions": [
+    {
+      "pass": true,
+      "message": ".contextforge/brief.md must exist on disk after generation"
+    },
+    {
+      "pass": true,
+      "message": "brief contains the stack"
+    },
+    {
+      "pass": true,
+      "message": "brief contains the folder map"
+    },
+    {
+      "pass": true,
+      "message": "brief contains real public signatures"
+    },
+    {
+      "pass": true,
+      "message": "brief contains the scene.json and prefab rules"
+    },
+    {
+      "pass": true,
+      "message": "brief contains the patch format"
+    },
+    {
+      "pass": true,
+      "message": "one-shot brief contains the developer task"
+    },
+    {
+      "pass": true,
+      "message": "Interactive brief instructs the AI to reply NEED: <path>"
+    },
+    {
+      "pass": true,
+      "message": "Interactive brief marker is mode=interactive"
+    },
+    {
+      "pass": true,
+      "message": "Compiled prompt successfully attached src/track.js"
+    }
+  ],
+  "consoleErrors": [],
+  "timestamp": "2026-10-03T12:22:44.746Z"
+}

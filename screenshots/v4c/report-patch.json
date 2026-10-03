@@ -1,0 +1,108 @@
+{
+  "project": "<project-path>",
+  "timestamp": "2026-10-03T12:53:49.065Z",
+  "screenshots": [
+    {
+      "name": "01-open-project.png",
+      "path": "<local-path>/contextforge 2/screenshots/v4c/01-open-project.png",
+      "bytes": 116759
+    },
+    {
+      "name": "02-single-patch-preview.png",
+      "path": "<local-path>/contextforge 2/screenshots/v4c/02-single-patch-preview.png",
+      "bytes": 141905
+    },
+    {
+      "name": "03-single-patch-applied.png",
+      "path": "<local-path>/contextforge 2/screenshots/v4c/03-single-patch-applied.png",
+      "bytes": 137730
+    },
+    {
+      "name": "04-single-patch-undone.png",
+      "path": "<local-path>/contextforge 2/screenshots/v4c/04-single-patch-undone.png",
+      "bytes": 137787
+    },
+    {
+      "name": "05-single-patch-redone.png",
+      "path": "<local-path>/contextforge 2/screenshots/v4c/05-single-patch-redone.png",
+      "bytes": 137730
+    },
+    {
+      "name": "06-single-patch-reset.png",
+      "path": "<local-path>/contextforge 2/screenshots/v4c/06-single-patch-reset.png",
+      "bytes": 137787
+    },
+    {
+      "name": "07-two-file-patch-preview.png",
+      "path": "<local-path>/contextforge 2/screenshots/v4c/07-two-file-patch-preview.png",
+      "bytes": 160677
+    },
+    {
+      "name": "08-two-file-patch-applied.png",
+      "path": "<local-path>/contextforge 2/screenshots/v4c/08-two-file-patch-applied.png",
+      "bytes": 158506
+    },
+    {
+      "name": "09-two-file-patch-undone.png",
+      "path": "<local-path>/contextforge 2/screenshots/v4c/09-two-file-patch-undone.png",
+      "bytes": 158491
+    },
+    {
+      "name": "10-bad-block-patch-preview.png",
+      "path": "<local-path>/contextforge 2/screenshots/v4c/10-bad-block-patch-preview.png",
+      "bytes": 178199
+    },
+    {
+      "name": "11-bad-block-nothing-written.png",
+      "path": "<local-path>/contextforge 2/screenshots/v4c/11-bad-block-nothing-written.png",
+      "bytes": 178199
+    }
+  ],
+  "verifications": [
+    {
+      "step": "2-single-patch-apply",
+      "initialModesSha": "f22801933368f81de0d8a2471618c127cca28c5182b540a88634a2f5bea64b00",
+      "singleAppliedSha": "5a6abd75bfae3c79beec201fc7eaa35167af7116e38454a5f500f8d8e88df5fb",
+      "changed": true,
+      "passed": true
+    },
+    {
+      "step": "3-single-patch-undo",
+      "initialModesSha": "f22801933368f81de0d8a2471618c127cca28c5182b540a88634a2f5bea64b00",
+      "singleUndoneSha": "f22801933368f81de0d8a2471618c127cca28c5182b540a88634a2f5bea64b00",
+      "matchedByteForByte": true,
+      "passed": true
+    },
+    {
+      "step": "4-single-patch-redo",
+      "singleAppliedSha": "5a6abd75bfae3c79beec201fc7eaa35167af7116e38454a5f500f8d8e88df5fb",
+      "singleRedoneSha": "5a6abd75bfae3c79beec201fc7eaa35167af7116e38454a5f500f8d8e88df5fb",
+      "matchedApplied": true,
+      "passed": true
+    },
+    {
+      "step": "5-two-file-patch-apply-and-undo",
+      "initialModesSha": "f22801933368f81de0d8a2471618c127cca28c5182b540a88634a2f5bea64b00",
+      "twoFilesModesSha": "8b4e03a5de2299b0399aef92a25177b8828f0b6182db99630f54ae94b4e03594",
+      "twoFilesUndoneModesSha": "f22801933368f81de0d8a2471618c127cca28c5182b540a88634a2f5bea64b00",
+      "initialSettingsSha": "d7e19c5671df20091d329e55d65b1fc86f9f4a10b93068893775ea4136325290",
+      "twoFilesSettingsSha": "3148dc14f7b8fa0d9760b7c197a951c54485266014a9e13c8a3625a11d6f48fc",
+      "twoFilesUndoneSettingsSha": "d7e19c5671df20091d329e55d65b1fc86f9f4a10b93068893775ea4136325290",
+      "bothRestoredByteForByte": true,
+      "passed": true
+    },
+    {
+      "step": "6-bad-block-nothing-written",
+      "initialModesSha": "f22801933368f81de0d8a2471618c127cca28c5182b540a88634a2f5bea64b00",
+      "badModesSha": "f22801933368f81de0d8a2471618c127cca28c5182b540a88634a2f5bea64b00",
+      "initialSettingsSha": "d7e19c5671df20091d329e55d65b1fc86f9f4a10b93068893775ea4136325290",
+      "badSettingsSha": "d7e19c5671df20091d329e55d65b1fc86f9f4a10b93068893775ea4136325290",
+      "applyDisabled": true,
+      "refusalReason": "1 of the 2 blocks in this reply could not be resolved, so nothing will be written. In \"src/settings.js\" (edit block 1): could not find exact FIND text",
+      "atomicityPreserved": true,
+      "passed": true
+    }
+  ],
+  "consoleErrors": [],
+  "status": "passed"
+}

@@ -1,0 +1,71 @@
+{
+  "project": "<project-path>",
+  "screenshots": [
+    {
+      "name": "01-context-resting.png",
+      "path": "<local-path>/contextforge 2/screenshots/v4/01-context-resting.png",
+      "bytes": 233357
+    },
+    {
+      "name": "02-context-compiled.png",
+      "path": "<local-path>/contextforge 2/screenshots/v4/02-context-compiled.png",
+      "bytes": 138075
+    },
+    {
+      "name": "02b-context-ranked-and-tokens.png",
+      "path": "<local-path>/contextforge 2/screenshots/v4/02b-context-ranked-and-tokens.png",
+      "bytes": 203606
+    },
+    {
+      "name": "02c-context-prompt-output.png",
+      "path": "<local-path>/contextforge 2/screenshots/v4/02c-context-prompt-output.png",
+      "bytes": 156610
+    },
+    {
+      "name": "03-context-insufficient-file.png",
+      "path": "<local-path>/contextforge 2/screenshots/v4/03-context-insufficient-file.png",
+      "bytes": 138104
+    },
+    {
+      "name": "03b-context-insufficient-detail.png",
+      "path": "<local-path>/contextforge 2/screenshots/v4/03b-context-insufficient-detail.png",
+      "bytes": 163132
+    },
+    {
+      "name": "04-patch-resting.png",
+      "path": "<local-path>/contextforge 2/screenshots/v4/04-patch-resting.png",
+      "bytes": 116477
+    },
+    {
+      "name": "05-patch-error-missing-anchor.png",
+      "path": "<local-path>/contextforge 2/screenshots/v4/05-patch-error-missing-anchor.png",
+      "bytes": 136471
+    },
+    {
+      "name": "05b-patch-error-reason.png",
+      "path": "<local-path>/contextforge 2/screenshots/v4/05b-patch-error-reason.png",
+      "bytes": 114330
+    },
+    {
+      "name": "06-patch-error-syntax.png",
+      "path": "<local-path>/contextforge 2/screenshots/v4/06-patch-error-syntax.png",
+      "bytes": 138274
+    },
+    {
+      "name": "06b-patch-syntax-reason.png",
+      "path": "<local-path>/contextforge 2/screenshots/v4/06b-patch-syntax-reason.png",
+      "bytes": 117887
+    },
+    {
+      "name": "07-patch-preview-clean.png",
+      "path": "<local-path>/contextforge 2/screenshots/v4/07-patch-preview-clean.png",
+      "bytes": 140743
+    },
+    {
+      "name": "07b-patch-diff.png",
+      "path": "<local-path>/contextforge 2/screenshots/v4/07b-patch-diff.png",
+      "bytes": 112713
+    }
+  ],
+  "consoleErrors": []
+}
