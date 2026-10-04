@@ -191,6 +191,15 @@ export {
 } from './patch/fileBlocks.js';
 
 export {
+  createProjectFromReply,
+  previewProjectFromReply,
+  type CreateProjectOptions,
+  type CreateProjectResult,
+  type PreviewProjectResult,
+  type ProjectReplyFileVerdict,
+} from './patch/createFromReply.js';
+
+export {
   validateAllSyntax,
   validateContentSyntax,
   type SyntaxCheckResult,

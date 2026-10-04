@@ -76,11 +76,6 @@ with \`new\` in code. That is what lets ContextForge show the scene, move an
 object, and write the change back without touching game logic. If an object
 exists but is not in \`scene.json\`, it cannot be edited.
 
-Two prefabs to start from, and they exist to be extended:
-
-- \`trackSegment\` — a stretch of road, parameterised by width, length and colour.
-- \`kart\` — a vehicle, parameterised by character.
-
 Add a prefab for anything that appears more than once.
 
 ## Prefabs are pure functions
@@ -109,8 +104,12 @@ ${PREFAB_RULES.map((rule) => `- \`${rule}\` — ${PREFAB_RULE_REASONS[rule]}`).j
 
 ## Start here
 
-Write \`scene.json\` and the two prefabs first, then the code that loads them.
+Write \`scene.json\` and prefabs first, then the code that loads them.
 Run it and look at it before adding anything else.
+
+## How to reply
+
+How to reply: reply with every file, one block per file, no other text. Each block is a line starting with ### FILE: followed by the project-relative path, then the full file contents in a code fence. First version must be small and must run with npm install then npm run dev.
 `;
 }
 

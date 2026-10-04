@@ -131,4 +131,16 @@ describe('buildScaffoldPrompt', () => {
     expect(preview).toContain('(not written yet)');
     expect(preview.length).toBeGreaterThan(500);
   });
+
+  it('removes mentions of kart and trackSegment and two prefabs (C1, C2)', () => {
+    expect(prompt).not.toContain('trackSegment');
+    expect(prompt).not.toContain('kart');
+    expect(prompt).not.toContain('two prefabs');
+  });
+
+  it('includes the How to reply section (C3)', () => {
+    expect(prompt).toContain(
+      'How to reply: reply with every file, one block per file, no other text. Each block is a line starting with ### FILE: followed by the project-relative path, then the full file contents in a code fence. First version must be small and must run with npm install then npm run dev.',
+    );
+  });
 });
