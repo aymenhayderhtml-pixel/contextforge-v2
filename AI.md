@@ -54,6 +54,16 @@ node scripts/run-e2e-patch.mjs                        # restores the game afterw
 
 The `scripts/run-e2e-edit-loop.mjs` harness needs the game dev server running.
 
+Performance regressions can be re-measured at any time, against `core/dist`:
+
+```bash
+npm run typecheck                            # rebuild core first
+node scripts/repro-round-c.mjs               # every Round C finding, one line each
+```
+
+It prints a measured number per finding and whether it is still slow. This is a
+measurement harness, not a gate — it does not exit non-zero on a slow result.
+
 ---
 
 ## Architecture
@@ -62,17 +72,23 @@ The `scripts/run-e2e-edit-loop.mjs` harness needs the game dev server running.
 packages/core/          @contextforge/core — pure, headless. No DOM, no app imports.
   src/index.ts          THE export surface. A function not re-exported here is not
                         part of core's contract.
-  src/parse/            tree-sitter readers: js.ts, gdscript.ts, tscn.ts
+  src/parse/            tree-sitter readers: js.ts, gdscript.ts, tscn.ts.
+                         tryParse reads node.children ONCE per node — that
+                         accessor materialises the subtree on every read (D53).
   src/extract/          project on disk -> graph: js.ts, godot.ts, files.ts
   src/graph/            analysis.ts (orphans, focus), reverse.ts (cycles, layers),
-                        manifest.ts, labels.ts (label rule)
+                         manifest.ts, labels.ts (label rule). All walks are
+                         iterative and take an index pointer, never shift() (D53)
   src/patch/            FIND/REPLACE + EDIT blocks, diffs, syntax checks.
-                        finder.ts returns Span{start,end} — a fuzzy match must
-                        replace its WHOLE region or the tail survives (D52).
-                        editBlocks.ts refuses a patch that contradicts itself.
-  src/scene/            scene file, edits, prefabs, slots, scaffold prompt
+                         finder.ts returns Span{start,end} — a fuzzy match must
+                         replace its WHOLE region or the tail survives (D52).
+                         editBlocks.ts refuses a patch that contradicts itself.
+                         diff.ts refuses past MAX_DIFF_LINES rather than OOMing (D53).
+  src/scene/            scene file, edits, prefabs, slots, scaffold prompt.
+                         sceneFile.ts memoises the parent-chain check (D53)
   src/context/          compiler (rank -> compile -> slice), brief. The NEED:/files
-                        attachment loop is the SEC-2 sink — guarded by D51.
+                         attachment loop is the SEC-2 sink — guarded by D51.
+                         Reads are size-gated and maxChars is ENFORCED (D53).
   src/history/          one undo/redo stack, keyed by project path. Undo verifies
                         each file against what the step recorded and refuses rather
                         than clobbering a hand edit (D52).
@@ -154,6 +170,11 @@ Push events, main to renderer, not in `CHANNELS`:
 | A patch applies but the file gains duplicate lines | A fuzzy match returned a start without an end — see `finder.ts` `Span` (D52) |
 | A patch is refused as "contradicts edit block N" | Two blocks touch the same region. Correct behaviour; check for duplicate headers first (D52) |
 | Undo refuses with "no longer match" | The file changed since the step. The step is kept — fix the file and retry (D52) |
+| The app freezes on opening a project | A generated file is being parsed. Check `tryParse` in `core/src/parse/grammars.ts` reads `node.children` once (D53) |
+| The Patch preview says "No diff shown" | The file is past `MAX_DIFF_LINES` (4,000). The patch may still apply (D53) |
+| A patch refuses with "over the 4000-line limit" | `DiffTooLargeError`. Narrow the `### EDIT:` block (D53) |
+| The prompt is longer than `maxChars` | Below the ~1,900-character floor; the gap says so explicitly (D53) |
+| A `NEED:` file is not attached | Either outside the project (D51) or past `MAX_FULL_FILE_CHARS` (D53) — read the gap sentence |
 
 ---
 
@@ -233,6 +254,36 @@ Push events, main to renderer, not in `CHANNELS`:
     file still parses, so the failure is a wrong *value*, not a syntax error.
     `svelteCheckGate.test.ts` has a character scanner for this.
 
+15. **`Array.prototype.shift()` is a memmove, so it is quadratic on a WIDE queue**
+    (D53). A chain benchmark measures nothing here — a chain keeps the queue at
+    depth 1, so each `shift()` moves one element and is free. A hub node's walk
+    enqueues everything at once and pays the full width per dequeue. Benchmark with
+    a **star**, never a chain; that mistake cost an entire round.
+
+16. **In the tree-sitter Node binding, `.children` is not a cached property** — every
+    read materialises fresh `SyntaxNode` objects for the whole subtree. Read it once
+    into a local before looping (D53). Reading it inside the loop costs O(subtree)
+    per node and the total goes quadratic: 23.6 s for an 80 KB file.
+
+17. **A performance test asserting a time RATIO can pass on the bug it was written
+    for** (D53). Four such tests were written here, all measured passing against
+    the unfixed source, and all still passing on unfixed code after being made
+    robust with best-of-3 — taking a minimum removes precisely the super-linear
+    term a ratio needs in order to detect it. Use an **absolute bound on a large
+    input**, and set the size by measuring the unfixed code too. Reverting the
+    source and confirming the test fails is the only proof that it bites.
+
+18. **Refuse, do not truncate.** A partial artefact with no marker is worse than a
+    missing one, because the consumer cannot tell (D53). A diff over
+    `MAX_DIFF_LINES` throws; a file over `MAX_FULL_FILE_CHARS` becomes a gap; an
+    over-budget prompt drops whole files. In all three the absence is stated.
+
+19. **An empty diff is ambiguous.** It means "unchanged" to `PatchScreen.svelte` and
+    also "too large to preview", and the two must be told apart (D53). See
+    `PatchPreview.diffNotShown` — a separate field rather than an addition to
+    `blockedReason`, because the renderer only shows `blockedReason` when the patch
+    is not applicable.
+
 ---
 
 ## Decisions index
@@ -260,7 +311,7 @@ being checked — see D17 and D19.
 | D40 end-to-end Electron automation | D41 full-source attachment for AI | D42 executable prefab bundling | D43 screenshots that prove their own state |
 | D44 one list, one count for Problems | D45 graph analysis runs in main, not the renderer | D46 the New Project gate is core's `checkBrief` | D47 a generator refuses to overwrite |
 | D48 an asset node only if the file exists | D49 graph labels stagger on row geometry | D50 `svelte-check` is in `verify` | D51 one containment helper + a root the renderer cannot name |
-| D52 spans, no self-contradicting patches, undo verifies before writing | | | |
+| D52 spans, no self-contradicting patches, undo verifies before writing | **D53** iterative walks, bounded diff, enforced budget | | |
 | D17 peer-deps fallback (**reconstructed**) | D18 key a generic event type by value | D19 shape before relations (**reconstructed**) | |
 
 ---
@@ -268,7 +319,7 @@ being checked — see D17 and D19.
 ## Known gaps and open bugs
 
 - **D31:** a line number in the trace skips the symbol check. Open.
-- **`findCycles` is super-linear** (D47). **Clipboard copy is untested**.
+- **Clipboard copy is untested**.
 - **`Viewport`'s `problems` prop was removed unused (D50).** It was documented as
   "shown as a notice but not rendered", which was not true — nothing read it. If
   the notice is wanted it should be built and the prop restored with a test.
@@ -277,15 +328,26 @@ being checked — see D17 and D19.
   They are `<div role="separator">` with `aria-valuenow`, and the `tabindex` is what
   makes the separator keyboard-reachable. `verify` runs `--threshold error`, so they
   print but do not fail the build.
-- **SEC-5 is NOT fixed.** The context compiler *reports* an over-budget prompt but
-  does not enforce it, so `maxChars: 0` returns whatever the inputs produce. A
-  behaviour change with real cost consequences, not a containment defect (D51).
-- **The `audit/2026-10` branch is a stale snapshot and its `AUDIT.md` is UNTRACKED**
-  — never committed, so reading it from git does not work. Find it in the
-  the `contextforge-audit` worktree beside this repo, under its `docs` folder.
-  **Three of its findings are wrong** (D51) — read D51 before working from it.
+- **A prompt cannot be smaller than ~1,900 characters (D53).** That is the opening
+  line, the `SURGICAL PATCH CONTRACT` and the `NOT ATTACHED` block. `maxChars`
+  below it is met by dropping requested files and then reported as unreachable, not
+  silently exceeded. Do not "fix" this by trimming the contract — a patch prompt
+  without it produces patches that do not apply.
+- **`maxChars: Infinity` waives the total budget but NOT `MAX_FULL_FILE_CHARS`**
+  (D53). One file is still refused above 400,000 characters.
 - **`docs/DEPENDENCIES.md:19` says tree-sitter is pinned to 0.22.x; it is not**
   (`packages/core` declares `^0.25.1`). Noted in D17, left unedited there.
+- **The `audit/2026-10` branch is a stale snapshot and its `AUDIT.md` is UNTRACKED**
+  — never committed, so reading it from git does not work. Find it in the
+  `contextforge-audit` worktree beside this repo, under its `docs` folder.
+  **Several of its findings are wrong**: three (D51) plus GRAPH-5's headline timing,
+  which was really CTX-3 (D53). Read D51 and D53 before working from it.
+  Repro tests live in `../contextforge-audit/packages/**/test/**/audit-*.test.ts`.
+- **Several audit findings are still open** — PATCH-2/SEC-3 (symlinks defeating the
+  lexical path checks), SEC-2 (`NEED:` reads), SEC-1 (`targetFile` unguarded in the
+  handler), SCENE-1 (a root with children cannot be deleted), SEC-7 (`applyEdit`
+  throws where its docstring promises a `Result`), SCENE-6 (escapable no-random
+  lint). Round D candidates.
 - **Graph labels assume left-to-right rows** and two fixed vertical lanes. True for
   `breadthfirst`; a third lane is not pre-built.
 - **Zoom does not re-measure label widths**, so at high zoom the margins are

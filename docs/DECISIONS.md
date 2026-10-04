@@ -1811,3 +1811,94 @@ passes can still match a region whose *shape* differs — is bounded by the new
 whole-region replacement and by every non-blank line having to appear in order, and
 is not worth a stricter matcher that would refuse legitimate drifted patches.
 
+
+### D53. Round C: eight findings, one rule each, and a lesson about timing tests
+
+**Context.** Round C of the audit — the speed round, plus the character-budget
+limit deferred from earlier rounds. Every finding was treated as a hypothesis and
+reproduced against current `main` before any code changed. **All eight were true.**
+Not one was already fixed.
+
+| Finding | Measured on main, before | After |
+|---|---|---|
+| CTX-3 defect walk is quadratic | 23,583 ms for 80 KB; 3.09x time for 2x input | 172 ms; 1.45x |
+| PATCH-5 unbounded LCS table | `FATAL: heap out of memory` at 40,000 lines — a SIGABRT of the main process | refuses in 31 ms at 200,000 lines |
+| GRAPH-4 `queue.shift()` | 1,360 ms (`findOrphans`, 60k nodes) | 120 ms |
+| GRAPH-5 `edges.some` dedupe | **misattributed — see below** | 475 ms at 4,000 refs, once CTX-3 was fixed |
+| GRAPH-3 recursive `findCycles` | `RangeError` at a 5,000-node cycle | 10,000 in 9 ms |
+| SCENE-8 unmemoised parent chain | 8,001,999 hops; 7,124 ms at 8,000 deep | 50 ms |
+| SEC-5 unbounded read | 4,195,802 chars against `maxChars: 1000` | refused before reading |
+| CTX-2 budget never enforced | `0`, `-100`, `1`, `NaN`, `Infinity` all ignored | enforced, with a named floor |
+
+**Decisions.**
+
+1. **The fix must be a local one: same data structure, same traversal, one fewer
+   expensive operation.** An index pointer instead of `shift()`. A hoisted local
+   instead of a second accessor read. A Set instead of a scan. An explicit frame
+   stack instead of the call stack. Each was chosen because it changes the cost
+   and nothing else — so the parity tests can assert the output is *identical*, not
+   merely similar. That is why every fix here has a test comparing against the
+   pre-fix algorithm written out longhand in the test file.
+
+2. **A size cap refuses; it does not truncate, and it does not degrade.** A file
+   past `MAX_DIFF_LINES` throws `DiffTooLargeError`; a file past
+   `MAX_FULL_FILE_CHARS` is skipped with a gap; a prompt over budget has its
+   requested files dropped whole. The common thread: a missing artefact is stated,
+   a partial one is not. A half file with no marker lets the AI read the end of
+   the file as the end of the logic and reason confidently about code that is not
+   there — a plausible-looking wrong answer, which is worse than a refusal.
+
+3. **The refusal reaches the human, per file.** `PatchPreview.diffNotShown` is a
+   new field rather than an addition to `blockedReason`, because the renderer only
+   displays `blockedReason` when `!applicable` — a note parked there would be
+   invisible in precisely the case it exists to explain. `PatchScreen.svelte`
+   previously rendered *any* empty diff as "No changes to this file", so a file
+   that changed but was too large to preview would have read as a confident lie
+   about whether a write was about to happen (D30).
+
+4. **A budget with a floor is named, not violated.** The prompt's mandatory parts
+   are ~1,900 characters. No budget below that can be met, and the only two
+   alternatives are a silently-over cap or a prompt with no patch contract — in
+   which every patch fails to apply. So `chars` may exceed `maxChars` in exactly
+   one case, and the gap says the number and says it is a floor (D33).
+
+**A finding whose headline number was wrong.** GRAPH-5 was reported at 6,062 ms
+for 2,000 references, attributed to `edges.some`. Isolating the stages showed
+`tryParse` alone accounted for essentially all of it — 7,739 ms parse against
+7,153 ms for the whole extraction. The `edges.some` scan was real and is worth
+removing, but it was never the bottleneck it appeared to be; CTX-3 was. Once
+CTX-3 was fixed, the same 4,000-reference extraction went 22,296 ms → 475 ms.
+The fix was kept because a quadratic scan is a quadratic scan whatever it cost
+today, but the attribution in the audit was wrong and is corrected here.
+
+**A mistake worth recording, because I made it twice.** The first timing tests
+asserted that doubling the input did not *quadruple* the time. That is the wrong
+shape of test and it does not work:
+
+- Each ratio was measured **passing on the unfixed source** on a fast machine.
+- Making them robust with best-of-3 — the obvious fix for flakiness — made them
+  **pass on unfixed code every time**, because taking the minimum of three runs
+  removes precisely the super-linear term a ratio depends on in order to detect
+  it.
+
+All four ratio tests are deleted, each replaced by a comment recording why.
+Absolute bounds on large inputs do separate cleanly, so every size is now set by
+measuring **both** directions. `findOrphans` at 60,000 nodes passed unfixed
+(1,704 ms, inside a 2s limit) and at 150,000 failed on fixed code (2,553 ms);
+120,000 is the size that works — 3,838 ms unfixed against 543 ms fixed. The
+lesson generalises past this repo: **a performance test that passes on the bug it
+was written for is worse than no test, because it reads as evidence.**
+
+**Two bugs I introduced while fixing SCENE-8, both now covered.** Seeding the
+cycle-detection `seen` set with the starting id makes the first iteration match
+and reports *every* instance as cyclic; and memoising the wrong verdict's
+polarity reports every *valid* scene as invalid. Neither was subtle, and both
+were caught by comparing against the naive walk rather than by reading the code
+carefully.
+
+**Verified by.** `packages/core/test/{parse,graph,scene,extract,patch,context}/perf-round-c.test.ts`
+and `packages/core/test/context/budget-round-c.test.ts`,
+`packages/app/test/shell/patchDiffCap.test.ts`. Each performance assertion was run
+against the reverted source to confirm it fails there; the parity assertions pass
+on both versions, which is the evidence that the fixes changed cost and not
+behaviour. `scripts/repro-round-c.mjs` reproduces every measurement above.
