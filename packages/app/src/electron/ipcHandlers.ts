@@ -1432,7 +1432,7 @@ export class AppBackend {
    * state of a project no AI has been handed yet, and the Context screen shows an
    * empty state rather than a red error for it.
    */
-  readBrief(): Result<{ path: string; markdown: string; mode: BriefMode } | null> {
+  readBrief(): Result<BriefResult | null> {
     if (this.root === null) return fail('No project is open.');
     try {
       return ok(readBrief(this.root));

@@ -267,7 +267,15 @@
       }).map((l) => [l.nodeId, l]),
     );
 
-    const elements = [
+    /**
+     * Cytoscape elements, widened before the first push.
+     *
+     * Declared explicitly because the array literal below infers its element type
+     * from the *node* objects alone, and pushing an edge into it was an error:
+     * `'edges'` is not assignable to `'nodes'`. `ElementDefinition` is Cytoscape's
+     * own union, so nothing here restates what an element may contain.
+     */
+    const elements: import('cytoscape').ElementDefinition[] = [
       ...nodes.map((node) => ({
         group: 'nodes' as const,
         data: {
@@ -521,10 +529,23 @@
         hoverId = event.target.id() as string;
         applyLabelDecision();
       });
+      /**
+       * `originalEvent.relatedTarget`, not `event.relatedTarget`.
+       *
+       * Cytoscape's `EventObject` has no `relatedTarget` of its own — it carries
+       * `originalEvent: MouseEvent`, which does. So the pointer's real destination
+       * is one hop down, and reading it off the wrapper was reading a property that
+       * is not there: `undefined` every time, so the guard never fired and the
+       * hovered label cleared on every step between nodes instead of only on
+       * leaving the canvas.
+       *
+       * `relatedTarget` is `EventTarget | null` on the DOM type, and Cytoscape's
+       * element is not a DOM `EventTarget`, so it is narrowed to "something was
+       * entered" rather than compared for identity: if the pointer entered
+       * anything, the following `mouseover` will set the new hover id anyway.
+       */
       cy.on('mouseout', 'node', (event) => {
-        // `relatedTarget` is the element the pointer entered. If it is another
-        // node, the following `mouseover` will set the new hover id anyway.
-        if (event.relatedTarget !== undefined && event.relatedTarget !== null) return;
+        if (event.originalEvent?.relatedTarget != null) return;
         hoverId = null;
         applyLabelDecision();
       });

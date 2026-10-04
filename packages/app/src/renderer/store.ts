@@ -46,6 +46,7 @@ import {
   type IpcListener,
   type IpcRequest,
   type IpcResponse,
+  type Result,
   type EventPayloadFor,
   type GizmoMode,
   type HistoryActionOutcome,
@@ -72,6 +73,17 @@ export interface HistoryActionPaths {
 }
 
 /** What the store exposes. Read through the accessors, not the raw sources. */
+/**
+ * The success arm of a `Result<T>`, whatever `T` is.
+ *
+ * `Result<T>` is `{ ok: true; value: T } | { ok: false; reason: string }`, so the
+ * success arm carries `value`. `Extract<Result<T>, { ok: true }>['value']` would
+ * say the same thing, but it is written here as a named type because it is used in
+ * three signatures and the inline form is long enough to hide the argument it
+ * applies to.
+ */
+export type SuccessOf<R> = Extract<R, { ok: true }> extends { value: infer V } ? V : never;
+
 export interface EditorStore {
   /** The whole state object, as a plain value. */
   readonly current: EditorState;
@@ -82,8 +94,17 @@ export interface EditorStore {
   readonly snap: number | null;
   /** True while a request is in flight, so buttons can say so. */
   readonly busy: boolean;
-  /** Messages for the developer: refusals, warnings, disk changes. Newest last. */
-  readonly notices: readonly Notice[];
+  /**
+   * Messages for the developer: refusals, warnings, disk changes. Newest last.
+   *
+   * `LiveNotice[]`, not `Notice[]`, because the screen reads `notice.id` to key
+   * and dismiss each one. `Notice` is the IPC payload and has no `id` — the store
+   * mints one in `pushNotice`. Typing this as `readonly Notice[]` said `id` did
+   * not exist on every `{#each visibleNotices as notice (notice.id)}` in
+   * `App.svelte`, six times, and it was correct: the values have ids and the type
+   * did not say so.
+   */
+  readonly notices: readonly LiveNotice[];
 
   // ── Project ────────────────────────────────────────────────────────────
   openProject(root: string): Promise<boolean>;
@@ -132,6 +153,11 @@ export interface EditorStore {
   ): Promise<IpcResponse<C>>;
   /** An IPC refusal's sentence, or `null` on success. The screen decides how to show it. */
   refusalOf<C extends IpcChannel>(result: IpcResponse<C>): string | null;
+  /**
+   * The success arm of a `Result`, or `null` for a refusal. See the implementation
+   * for why this exists rather than a discriminant check at each call site.
+   */
+  valueOf<R>(result: R): SuccessOf<R> | null;
 
   // ── Scene ──────────────────────────────────────────────────────────────
   /**
@@ -541,6 +567,40 @@ export function createEditorStore(deps: StoreDeps): EditorStore {
 
     refusalOf<C extends IpcChannel>(result: IpcResponse<C>): string | null {
       return result.ok ? null : result.reason;
+    },
+
+    /**
+     * Narrow a `Result` by returning its value, or `null` for a refusal.
+     *
+     * Exists because `refusalOf` cannot do this job. A method call cannot narrow a
+     * union — TypeScript only narrows on a discriminant check written at the use
+     * site — so every screen was written as
+     *
+     * ```ts
+     * const reason = store.refusalOf(result);
+     * if (reason !== null) { refusal = reason; return; }
+     * entries = result.value.entries;   // error: 'value' does not exist on Result<...>
+     * ```
+     *
+     * and `value` is a property of the success arm only. Six such errors across
+     * PatchScreen and ContextScreen, all the same error, all reported by
+     * `svelte-check` and invisible to `tsc` because it does not read `.svelte`.
+     *
+     * The alternative was `if (!result.ok) { ... return; }` at each of the six
+     * sites, which works and needs no new method. It is not what was chosen,
+     * because each of those sites wants the *reason* as well as the branch, and
+     * `refusalOf` is how they get it. This returns both in one call, so a site
+     * reads the refusal and the value from a single expression and the union is
+     * narrowed once, in one place.
+     *
+     * Null rather than a thrown error, because every caller already handles the
+     * refusal by putting it on screen and returning. A throw here would be a new
+     * failure mode at six sites rather than a narrowing.
+     */
+    valueOf<R>(result: R): SuccessOf<R> | null {
+      return (result as Result<unknown>).ok
+        ? ((result as { value: unknown }).value as SuccessOf<R>)
+        : null;
     },
 
     async closeProject() {

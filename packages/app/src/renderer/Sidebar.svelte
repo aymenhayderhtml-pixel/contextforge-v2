@@ -2,9 +2,20 @@
   Sidebar.svelte — navigation across the application screens.
 -->
 <script lang="ts">
+  /**
+   * Every screen the app can show.
+   *
+   * Defined here, not in `App.svelte`, because `App.svelte` is the only consumer
+   * and the sidebar is the only producer — and a `ScreenId` in each file is two
+   * definitions that can drift. `App.svelte` imports this one, so adding a screen
+   * is a change to this union and nothing else. The same "one list, one owner"
+   * rule as the Problems bar (D44).
+   */
+  export type ScreenId = 'project' | 'context' | 'graph' | 'scene' | 'patch';
+
   /** One screen as `App.svelte` declares it. */
   export interface ScreenEntry {
-    id: string;
+    id: ScreenId;
     label: string;
     /** Which step delivers it, or `working` for the one that does. */
     step?: string;
@@ -21,8 +32,17 @@
     dirty,
   }: {
     screens: ReadonlyArray<ScreenEntry>;
-    active: string;
-    onSelect: (id: string) => void;
+    /**
+     * `ScreenId`, not `string`.
+     *
+     * The sidebar was the one component typed on bare `string` for the screen id,
+     * so `App.svelte`'s handler `(id: ScreenId) => (active = id)` did not fit a
+     * `(id: string) => void` parameter and was an error. Narrowing here fixes it at
+     * the source: the sidebar can only emit an id that `App.svelte`'s `ScreenId`
+     * union can hold, because `ScreenEntry.id` is that union.
+     */
+    active: ScreenId;
+    onSelect: (id: ScreenId) => void;
     projectName: string | null;
     scenePath: string | null;
     /** True while a request is in flight; shown as text, not as a spinner glyph. */

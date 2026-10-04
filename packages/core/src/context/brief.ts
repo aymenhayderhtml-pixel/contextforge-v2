@@ -336,13 +336,20 @@ export function readBrief(projectRoot: string): {
   path: string;
   markdown: string;
   mode: BriefMode;
+  /** `null` for a brief not written by `buildBriefMarkdown`. See `briefStatsFrom`. */
+  stats: BriefStats | null;
 } | null {
   const root = resolve(projectRoot);
   const target = join(root, ...BRIEF_PATH.split('/'));
   if (!existsSync(target)) return null;
 
   const markdown = readFileSync(target, 'utf-8');
-  return { path: BRIEF_PATH, markdown, mode: briefModeFrom(markdown) };
+  return {
+    path: BRIEF_PATH,
+    markdown,
+    mode: briefModeFrom(markdown),
+    stats: briefStatsFrom(markdown),
+  };
 }
 
 /**
@@ -357,6 +364,48 @@ export function readBrief(projectRoot: string): {
 export function briefModeFrom(markdown: string): BriefMode {
   const marker = /^<!-- contextforge:brief mode=(oneShot|interactive) -->$/m.exec(markdown);
   return marker?.[1] === 'interactive' ? 'interactive' : 'oneShot';
+}
+
+/**
+ * Recover the counts from a saved brief, or `null` for a brief that has none.
+ *
+ * **Why this exists.** `readBrief` returned `{path, markdown, mode}` and the
+ * Context screen rendered `brief.stats.nodes` from it — so reopening a project
+ * showed a brief panel whose four count rows read `undefined`. Nothing caught it:
+ * `BriefResult.stats` was typed as required, the handler's return type was a
+ * narrower inline object rather than `BriefResult`, and no test read the panel's
+ * counts. `svelte-check` reported it as a missing property, which is the only
+ * reason it was ever seen (D50).
+ *
+ * **Not re-extracting the project.** The obvious alternative — run the extractor
+ * again to recompute the numbers — is a full project scan on what the screen
+ * treats as a cheap read, and it would report the counts *now* rather than the
+ * counts the brief was written with, which is a different and wrong number: the
+ * file on disk is the record of what was handed to the AI.
+ *
+ * So the counts are read back out of the markdown, which writes them verbatim in
+ * `overviewSection`. This is the same lexical-over-own-marker approach as
+ * `briefModeFrom` above, and carries the same caveat: a brief hand-edited away
+ * from the generated shape yields `null`, and the screen says the counts are
+ * unavailable rather than showing zeros that were never counted.
+ */
+export function briefStatsFrom(markdown: string): BriefStats | null {
+  const number = (line: RegExp): number | undefined => {
+    const found = line.exec(markdown);
+    return found?.[1] === undefined ? undefined : Number(found[1]);
+  };
+
+  const nodes = number(/^- Graph: (\d+) node\(s\), \d+ edge\(s\)$/m);
+  const edges = number(/^- Graph: \d+ node\(s\), (\d+) edge\(s\)$/m);
+  const prefabs = number(/^- Prefab modules: (\d+)$/m);
+  const instances = number(/^- Scene instances: (\d+)$/m);
+
+  // All four or none. A brief missing one line is a brief whose shape this module
+  // did not write, and half the counts would be a worse answer than none.
+  if (nodes === undefined || edges === undefined || prefabs === undefined || instances === undefined) {
+    return null;
+  }
+  return { nodes, edges, prefabs, instances };
 }
 
 // ── Sections ─────────────────────────────────────────────────────────────────

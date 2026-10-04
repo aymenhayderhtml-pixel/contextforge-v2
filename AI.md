@@ -32,9 +32,10 @@ before you commit anything.
 ```bash
 npm ci                                    # install (exit 0; no --legacy-peer-deps needed)
 node node_modules/electron/install.js     # npm ci does NOT fetch the Electron binary
-npm run verify                            # the gate: boundaries + three-pinned + typecheck + prefab lint + tests
+npm run verify                            # the gate: boundaries + three-pinned + typecheck + svelte-check + prefab lint + tests
 npm test                                  # vitest run, ~50s
 npm run typecheck                         # tsc --build  (this is also the core build)
+npm run check:svelte                      # svelte-check on the renderer; MUST follow typecheck
 npm run build:ui -w @contextforge/app     # vite build the renderer bundle
 npm run check:boundaries                  # import-direction checker
 npm run lint:prefabs                      # scene/prefab lint; needs core built first
@@ -85,7 +86,14 @@ packages/app/           @contextforge/app — the Electron shell
     components/         Sidebar, ProblemsPanel, Toasts, Outliner, Inspector
     viewport/           Three.js scene viewer; rng.ts is a mirrored core function
     graph/labels.ts     the renderer mirror of core's label rule (see Gotchas)
+    Sidebar.svelte      owns the ScreenId union — App.svelte imports it
+    vite-env.d.ts       declares import.meta.env for the renderer
   src/electron/capture-*.mjs   screenshot harnesses
+
+packages/app/tsconfig.svelte.json   a SEPARATE config, for svelte-check only.
+                        Not in the tsc project graph — tsc cannot compile .svelte.
+packages/app/svelte.config.js      needed by svelte-check, which does not read
+                        vite.config.ts
 
 scripts/                check-boundaries, check-three-pinned, lint-prefabs,
                         redact-screenshots.py, run-e2e-*.mjs
@@ -131,6 +139,8 @@ Push events, main to renderer, not in `CHANNELS`:
 | A screenshot looks wrong | `app/src/electron/capture-v4.mjs` is the reference harness; it asserts before capturing |
 | A test cannot find a fixture | `kart-dash-3d-v2` is a **sibling** of this repo, reached by `..` hops or `CF_PROJECT` |
 | A build says "core must be built" | `scripts/lint-prefabs.mjs:26` — run `npm run typecheck` first |
+| `svelte-check` reports phantom type errors | Core's `.d.ts` is stale — force a full core rebuild (see Gotchas, 9) |
+| A drag in the 3D viewport does nothing | `Viewport.svelte` `onTransformCommit` — the field is `patch:`, not `transform:` (D50) |
 
 ---
 
@@ -176,13 +186,39 @@ Push events, main to renderer, not in `CHANNELS`:
 8. **e2e tests skip by default** and say so (D27). They need `CF_PROJECT` and
    `CF_E2E=1`. A green suite does not mean they ran.
 
+9. **`npm run check:svelte` reads core through `core/dist`, so it must run after
+   `typecheck`.** It is placed there in `verify` for this reason, and it is not a
+   formality: mid-task `tsc --build` left `core/dist/context/brief.d.ts` stale, so
+   `svelte-check` reported four phantom errors about a type that was already
+   correct. The fix was to force a full rebuild of core (`tsc --build --force`
+   against `packages/core/tsconfig.json`). Same trap as gotcha 3, one level up:
+   `tsc --build` is incremental and will not regenerate a declaration it thinks is
+   current.
+
+10. **A `<!-- svelte-ignore -->` must sit on the line directly above the element.**
+    Svelte reads it from the line the diagnostic points at. One placed further up
+    the block suppresses nothing — and if it lists a code the rule does not raise,
+    it silently looks like it worked.
+
+11. **A JSONC file cannot be comment-stripped with a regex if its values contain
+    glob stars.** `tsconfig.svelte.json`'s `include` holds `src/renderer/**/*.svelte`,
+    and those two characters are a comment terminator to any block-comment pattern.
+    Stripping rewrote the globs to `src/renderer*.svelte`, which still parses — so
+    the failure is a wrong value, not a syntax error. `svelteCheckGate.test.ts` has
+    a character-by-character scanner for this reason.
+
 ---
 
 ## Decisions index
 
-Full reasoning in `docs/DECISIONS.md`. **D17, D18 and D19 do not exist** —
-`package.json:14` cites D17 for `--legacy-peer-deps`, which is a dangling
-reference to a decision that was never written.
+Full reasoning in `docs/DECISIONS.md`.
+
+**D17, D18 and D19 were never written.** They were cited by live code
+(`package.json:14`, `ipc.ts:806`, `backend.test.ts:267`) before the log existed,
+and no commit, branch, stash or dangling blob contains them. They have since been
+**reconstructed from the code that cites them**, and each entry says so rather than
+being passed off as a record. Two of them also corrected a stale doc comment while
+being checked — see D17 and D19.
 
 | | | | |
 |---|---|---|---|
@@ -197,7 +233,8 @@ reference to a decision that was never written.
 | D36 keyword and runtime-error filtering | D37 toast stacking and problem routing | D38 plain-English syntax errors | D39 Context screen reachability |
 | D40 end-to-end Electron automation | D41 full-source attachment for AI | D42 executable prefab bundling | D43 screenshots that prove their own state |
 | D44 one list, one count for Problems | D45 graph analysis runs in main, not the renderer | D46 the New Project gate is core's `checkBrief` | D47 a generator refuses to overwrite |
-| D48 an asset node only if the file exists | D49 graph labels stagger on row geometry | | |
+| D48 an asset node only if the file exists | D49 graph labels stagger on row geometry | D50 `svelte-check` is in `verify` | |
+| D17 peer-deps fallback (**reconstructed**) | D18 key a generic event type by value | D19 shape before relations (**reconstructed**) | |
 
 ---
 
@@ -206,11 +243,17 @@ reference to a decision that was never written.
 - **D31:** a line number in the trace skips the symbol check. Open.
 - **`findCycles` is super-linear** (D47). Not fixed.
 - **Clipboard copy is untested** — no clipboard harness exists.
-- **`svelte-check` is not installed.** `tsc` does not read `.svelte` files, so an
-  undefined identifier in a component is invisible to every unit test. It was caught
-  only by the capture harness reporting console errors. A hand-written substitute
-  was tried and **deleted** because it looked like a safety net and caught nothing
-  (D49). Adding `svelte-check` is the real fix and is still open.
+- **`Viewport`'s `problems` prop was removed unused (D50).** It was documented as
+  "shown as a notice but not rendered", which was not true — nothing read it. If
+  the notice is wanted it should be built and the prop restored with a test.
+- **Two `svelte-check` warnings remain and are deliberately not suppressed (D50).**
+  `a11y_no_noninteractive_tabindex` on the two panel resizers in `SceneScreen.svelte`.
+  They are `<div role="separator">` with `aria-valuenow`, and the `tabindex` is what
+  makes the separator keyboard-reachable. Svelte 5.57.1 does not honour a
+  multi-code `svelte-ignore` for this rule. `verify` runs `--threshold error`, so
+  they do not fail the build — but they will print, and that is intentional.
+- **`docs/DEPENDENCIES.md:19` says tree-sitter is pinned to 0.22.x; it is not**
+  (`packages/core` declares `^0.25.1`). Noted in D17 and left unedited there.
 - **Graph labels assume left-to-right rows** and two fixed vertical lanes. True for
   `breadthfirst`; a third lane is not pre-built.
 - **Zoom does not re-measure label widths**, so at high zoom the margins are

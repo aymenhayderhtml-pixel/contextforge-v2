@@ -517,8 +517,16 @@ export interface BriefResult {
   /** The markdown, so the screen can show it without a second round trip. */
   markdown: string;
   mode: BriefMode;
-  /** What went in: node count, edge count, prefab and instance counts. */
-  stats: { nodes: number; edges: number; prefabs: number; instances: number };
+  /**
+   * What went in: node count, edge count, prefab and instance counts.
+   *
+   * **`null` when the brief on disk was not written by this module** — a
+   * hand-edited one, or one from an older version. The screen says the counts are
+   * unavailable rather than showing zeros, because zero is a count and this is not
+   * one. `generateBrief` always fills it; `readBrief` recovers it from the
+   * markdown and cannot always. See `briefStatsFrom` in core's `brief.ts`.
+   */
+  stats: { nodes: number; edges: number; prefabs: number; instances: number } | null;
 }
 
 /** The map of request channel → its argument and result types. */
@@ -761,7 +769,15 @@ export interface IpcRequests {
   /** Read `.contextforge/brief.md`; `ok(null)` when it does not exist yet. */
   [CHANNELS.readBrief]: {
     request: Record<string, never>;
-    response: Result<{ path: string; markdown: string; mode: BriefMode } | null>;
+    /**
+     * `BriefResult | null`, not the inline shape this used to spell out.
+     *
+     * The inline version omitted `stats`, so the screen's `brief = result.value`
+     * was a type error against `BriefResult` — and the channel said a brief had no
+     * counts when `readBrief` in core has returned them since D50. Naming the type
+     * means the channel and the screen cannot disagree about the shape again.
+     */
+    response: Result<BriefResult | null>;
   };
 };
 

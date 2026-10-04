@@ -17,7 +17,7 @@
   import type { PrefabDefinition, SceneEdit } from '@contextforge/core';
   import { VIEWPORT_KEYS, type GizmoMode } from '../../ipc.js';
   import { createAppError, type AppError } from '../../errors.js';
-  import { buildTree, instanceLabel } from '../components/tree.js';
+  import { instanceLabel } from '../components/tree.js';
   import { indexPrefabDefinitions } from '../viewport/sceneGraph.js';
   import { snapValuesFor, toggleSpace } from '../viewport/picking.js';
   import Outliner from '../components/Outliner.svelte';
@@ -205,13 +205,6 @@
    * from a prefab that threw. Matched by name because an instance records only the
    * prefab name.
    */
-  const failedByName = $derived(
-    new Map((snapshot?.prefabs.failed ?? []).map((f) => [f.name, f] as const)),
-  );
-
-  /** The outliner tree, or nothing when no project is open. */
-  const tree = $derived(snapshot === null ? [] : buildTree(snapshot.scene.instances, failedByName));
-
   let registryVersion = $state(0);
   $effect(() => {
     return subscribeRegistry(() => {
@@ -241,11 +234,25 @@
   /** What the current snap setting means, shown so the choice is not a guess. */
   const snapValues = $derived(snapValuesFor(store.snap));
 
-  /** The selected instance, or null. The inspector's whole input. */
+  /**
+   * The selected instance, or null. The inspector's whole input.
+   *
+   * Written as a captured discriminant rather than an inline ternary on
+   * `store.selection`, because `Selection` is a union — `{kind:'instance'; id} |
+   * {kind:'none'}` — and TypeScript narrows a union from a *check written on the
+   * value*, not from a condition spread across a ternary. Inside
+   * `snapshot === null || store.selection.kind !== 'instance' ? … : …` the
+   * `selection.id` in the false branch had no narrowing, and `id` does not exist
+   * on the `none` arm.
+   *
+   * `selectionId` is the narrowed id or `null`, so the `find` is a plain lookup
+   * with no union left in it.
+   */
+  const selectionId = $derived(store.selection.kind === 'instance' ? store.selection.id : null);
   const selected = $derived(
-    snapshot === null || store.selection.kind !== 'instance'
+    snapshot === null || selectionId === null
       ? null
-      : (snapshot.scene.instances.find((i) => i.id === store.selection.id) ?? null),
+      : (snapshot.scene.instances.find((i) => i.id === selectionId) ?? null),
   );
 
   const gizmoModes: ReadonlyArray<{ mode: GizmoMode; label: string; key: string }> = [
@@ -421,7 +428,20 @@
       </div>
 
       <!-- Left Resizer between Outliner and Viewport -->
-      <!-- svelte-ignore a11y_no_noninteractive_tabindex a11y_no_noninteractive_element_interactions -->
+      <!--
+        The `<div>` is deliberate: a drag handle is not a control.
+        `role="separator"` with `aria-orientation` and a live `aria-valuenow`
+        describes it correctly, where a `<button>` would claim it is activatable.
+
+        `a11y_no_noninteractive_element_interactions` is suppressed because the
+        element genuinely handles pointer input. `a11y_no_noninteractive_tabindex`
+        is **not** suppressed and `svelte-check` still reports it under
+        `--threshold warning`; Svelte 5.57.1 does not honour a multi-code
+        `svelte-ignore` for it. Left reporting rather than worked around, because the
+        `tabindex="0"` is what makes the separator keyboard-reachable — which is the
+        entire point of `aria-valuenow`. Recorded in AI.md under Known gaps.
+      -->
+      <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
       <div
         class="resizer left"
         role="separator"
@@ -443,13 +463,12 @@
           {store}
           scene={snapshot.scene}
           {prefabIndex}
-          problems={snapshot.problems}
           onEdit={(edit) => void apply(edit)}
         />
       </div>
 
-      <!-- Right Resizer between Viewport and Inspector -->
-      <!-- svelte-ignore a11y_no_noninteractive_tabindex a11y_no_noninteractive_element_interactions -->
+      <!-- Right Resizer between Viewport and Inspector. Same reasoning as the left one. -->
+      <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
       <div
         class="resizer right"
         role="separator"

@@ -337,13 +337,6 @@
       copied = false;
     }
   }
-
-  /** The folder the new project would be created at, for the developer's confirmation. */
-  const targetFolder = $derived(
-    parentFolder !== null && draftName.trim() !== ''
-      ? `${parentFolder.replace(/\/+$/, '')}/${draftName.trim()}`
-      : null,
-  );
 </script>
 
 <section class="screen">

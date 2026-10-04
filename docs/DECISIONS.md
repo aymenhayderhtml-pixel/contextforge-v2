@@ -1467,3 +1467,169 @@ hover shows each at full path. `main.js` fits its slot outright and is drawn at 
   re-measure, so at a large zoom the margins are proportionally looser.
 
 ---
+
+---
+
+## D50. `svelte-check` is in `verify`, and it found four live bugs the first hour
+
+**Context.**
+1. `tsc --build` does not read `.svelte` files. `packages/app/tsconfig.json`
+   excludes `src/renderer` on purpose, so an undefined identifier in a component
+   was invisible to the type checker, to the unit tests, and — until now — to every
+   gate in `npm run verify`.
+2. It was not theoretical. `applyLabelDecision` in `GraphScreen.svelte` reached for
+   `nodes`, a parameter of `sync` that is not in scope in it. Every one of the
+   1,270 tests passed; the only evidence was four `ReferenceError`s in an Electron
+   capture run. A hand-written substitute linter was tried in D49 and **deleted**,
+   because it reported ~200 false positives and, once those were fixed, still did
+   not notice that exact bug.
+
+**Decision.**
+1. **`svelte-check@4.7.6` is a pinned `devDependency`** and `npm run check:svelte`
+   is the fourth stage of `npm run verify`, after `typecheck` and before the tests.
+   Pinned rather than `npx`, because an `npx` call downloads a different version on
+   every machine and a gate that is not the gate catches nothing.
+2. **`packages/app/tsconfig.svelte.json` is a separate config** for the renderer,
+   and is deliberately **not** in the `tsc` project graph — adding it to
+   `references` would make `tsc` try to compile `.svelte` files.
+3. **`skipLibCheck` is on.** Without it, four third-party declaration-file defects
+   fail the build — two in `@types/three` (`GPUTexture` is not in this TypeScript
+   version's DOM lib) and two in Svelte's own `esrap` resolution. None can be fixed
+   from this repo, and a gate that cannot go green gets ignored.
+4. **`packages/app/svelte.config.js` was added.** `svelte-check` does not read
+   `vite.config.ts`; without a Svelte config it reports "No Svelte configuration
+   found in vite config" once per component — twelve copies of one missing-file
+   error, which buried the thirty-odd real ones underneath.
+5. **`--threshold error`, not `--threshold warning`.** Two warnings are known and
+   documented below. Failing on them would mean silencing them, and silencing them
+   would hide the next real one.
+
+**What it found. Four of these were live bugs, not type noise.**
+
+| Defect | Effect |
+|---|---|
+| `Viewport.svelte` sent `transform:` where core's `SceneEdit` names the field `patch:` | `edit.patch` was `undefined`, so **dragging a gizmo moved nothing** — silently, because the guard in `setTransform` checks the instance exists, not that the patch has content |
+| `readBrief` returned no `stats` while the brief panel read `brief.stats.nodes` | Reopening a project showed four count rows reading `undefined` |
+| `brief.markdown` read inside an async clipboard handler | `{#if brief !== null}` does not narrow inside a closure; the component can re-render first. A real, if rare, crash |
+| `store.notices` typed `Notice[]`, holding `LiveNotice[]` | Six `notice.id` reads in `App.svelte` were reading a property the type did not have |
+
+Plus two type errors with no runtime effect: `Result.value` at six call sites
+(`refusalOf` cannot narrow a union — a method call does not narrow, only a
+discriminant check written at the use site does), and `?: string` under
+`exactOptionalPropertyTypes`.
+
+**Decisions taken inside the fix.**
+- **`store.valueOf(result)` was added rather than rewriting six call sites** to
+  `if (!result.ok) { … return; }`. Both work; each site wants the reason *and* the
+  branch, and `refusalOf` is how it gets the reason. The alternative was
+  considered and rejected as duplicating the same union-narrowing six times.
+- **`briefStatsFrom` reads the counts back out of the markdown** rather than
+  re-extracting the project. The file on disk is the record of what was handed to
+  the AI; recomputing would report the counts *now*, which is a different and wrong
+  number, and it would be a full project scan on what the screen treats as a cheap
+  read. `BriefResult.stats` is therefore nullable and the panel omits the rows when
+  it is null — zeros would be a count, and "we could not read it" is not one.
+- **`ScreenId` moved to `Sidebar.svelte`.** It was one union in `App.svelte` and a
+  bare `string` in the sidebar, so the sidebar's `onSelect` could not accept
+  `App.svelte`'s handler. The producer of an id now owns its type, which is the
+  "one list, one owner" rule D44 applied to the Problems bar. Two regression tests
+  read the union from `App.svelte` and were updated to read it from its owner.
+- **`Viewport`'s dead `problems` prop was removed, not kept with a corrected
+  comment.** It was documented as "shown as a notice but not rendered", which was
+  **not true** — nothing read it. The comment is why it survived: the doc said the
+  value was used, so the dead prop read as a decision. `SceneScreen` no longer
+  passes it.
+- **`problems` is a stated gap.** The prop was accepted and unused; if the notice
+  is wanted it should be built and the prop restored with a test.
+
+**Known warnings, deliberately left reporting.** Two
+`a11y_no_noninteractive_tabindex` on the Outliner/Inspector panel resizers in
+`SceneScreen.svelte`. They are `<div role="separator">` with `aria-orientation` and
+a live `aria-valuenow`, and the `tabindex="0"` is what makes the separator
+keyboard-reachable — which is the entire point of `aria-valuenow`. Svelte 5.57.1
+does not honour a multi-code `svelte-ignore` for this rule, so it is recorded in
+`AI.md` under Known gaps rather than suppressed. `verify` runs at
+`--threshold error`, so they do not fail the build.
+
+**Lesson worth stating.** Every one of these was invisible to `tsc`, to the unit
+tests, and — in two cases — to a screenshot. The four that mattered were found by a
+tool that was not there yesterday. A gate nobody ran is not a gate, and a check
+that reports false positives is worse than no check, because it teaches people to
+ignore it.
+
+---
+
+## D17–D19. Reconstructed from the references that cite them
+
+**These three entries were never written.** They were cited by live code before the
+decision log existed, and no record of them survives anywhere:
+
+- `docs/DECISIONS.md` jumps D16 → D20 in every commit that contains it.
+- `git log --all -S"D17"` finds the citation in `package.json` from the initial
+  import and never an entry.
+- The one dangling commit (`dba9fa7`, a stash of `step5-all`) has the same gap.
+- No dangling blob contains a `## D17`, `## D18` or `## D19` heading.
+
+So each is reconstructed **only from what the code proves**, and each says so. These
+are not the original reasoning — nobody can recover that — and they are labelled
+rather than passed off as records.
+
+### D17. `--legacy-peer-deps` is the documented fallback, and it is not needed
+
+**Reconstructed from `package.json:14,16` and `docs/DEPENDENCIES.md`.**
+
+`tree-sitter-typescript@0.23.2` and `tree-sitter-gdscript@6.1.0` declare peer
+dependencies on `tree-sitter@^0.21.x`, while `packages/core` declares
+`tree-sitter@^0.25.1`. Installing the two together needs `--legacy-peer-deps`.
+
+**But it is not needed for this repo's install path, and the docs already say so.**
+`docs/RUNNING.md` records `npm ci` and `npm install` both exiting 0, and why: the
+lockfile is v3 and already records a valid tree, so npm never re-checks the peer
+ranges. The flag matters in exactly one case — if `package-lock.json` is deleted.
+
+**One correction to the existing docs, found while checking.** `DEPENDENCIES.md:19`
+says tree-sitter is "pinned to the 0.22.x line"; `packages/core/package.json`
+actually declares `^0.25.1`. The peer conflict is real; the stated pin is not what
+the code does. The pinning of `three@0.180.0` is a different decision and is
+covered by D25 and D28.
+
+**Note.** `package.json:14` and `:16` cite D17 for the peer-dependency story, which
+is what this entry reconstructs. `DEPENDENCIES.md:19` also cites it and is wrong on
+the version; that line is left as-is here rather than edited under a D17 heading,
+because it belongs to the dependency audit, not to this entry.
+
+### D18. Key a generic event type by what the call site holds
+
+**Reconstructed from `packages/app/src/ipc.ts:800-824`, which cites D18 by name.**
+
+There are two event maps in `ipc.ts` and they are easy to confuse: `EventName` is
+the **value** (`'app:notice'`) and `EventKey` is the **key** (`notice`). A generic
+constrained by the wrong one resolves the payload type to `never`, which surfaces as
+a baffling `not assignable to parameter of type 'never'` at the call site rather
+than as an error where the mistake is.
+
+So the value-keyed and key-keyed forms have **distinct names** and separate
+documentation, and `IpcListener` is constrained by the value because a subscriber
+writes `deps.listener(EVENTS.notice, …)` — `EVENTS.notice` is the string.
+
+### D19. Scene shape is checked before scene relations, and only shape failures are reported
+
+**Reconstructed from `packages/app/test/shell/backend.test.ts:263-268`, which cites
+D19 by name, and `packages/core/src/scene/sceneFile.ts`.**
+
+`validateScene` returns as soon as Zod rejects the shape. The cross-field rules —
+duplicate ids, parent cycles, missing parents — need a *parsed* scene, and there is
+not one when the shape is wrong. So a malformed document reports only its shape
+failure.
+
+This is a deliberate limit rather than an oversight, and the test says so: a change
+that starts reporting both is a visible improvement rather than a silent one.
+
+**One correction found while checking.** `packages/core/src/scene/scene.schema.ts:14`
+says the cross-field rules live in `superRefine`. They do not — `validateScene`
+calls a hand-written `checkRelations` **outside** the Zod schema, because each rule
+is a statement about the *set* of instances rather than about any one field, which
+Zod's tree types cannot express. The comment describes a design the code moved away
+from; the code is right and the comment is stale.
+
+---

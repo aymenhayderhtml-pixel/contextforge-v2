@@ -328,6 +328,7 @@ export {
   BRIEF_DIR,
   BRIEF_MODES,
   BRIEF_PATH,
+  briefStatsFrom,
   buildBriefMarkdown,
   generateBrief,
   readBrief,

@@ -20,7 +20,9 @@
   let { store }: { store: EditorStore } = $props();
 
   /** The five screens. `step` is a build tag for the sidebar, not a promise. */
-  type ScreenId = 'project' | 'context' | 'graph' | 'scene' | 'patch';
+  // Imported, not redeclared: `Sidebar.svelte` owns the union, so the sidebar can
+  // only emit an id this file's `active` can hold.
+  import type { ScreenId } from './Sidebar.svelte';
   const SCREENS: ReadonlyArray<{ id: ScreenId; label: string; step: string }> = [
     { id: 'project', label: 'Project', step: 'working' },
     { id: 'context', label: 'Context', step: 'working' },

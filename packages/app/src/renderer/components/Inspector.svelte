@@ -98,10 +98,28 @@
 
   let showGlobalDetails = $state(false);
 
+  /**
+   * One row in the inspector's error list.
+   *
+   * `field` and `details` are `?: string | undefined` rather than `?: string`.
+   * Under `exactOptionalPropertyTypes` (on in `tsconfig.base.json`) an optional
+   * property does **not** accept an explicit `undefined`, so assigning
+   * `details: extractDetails(err)` — which returns `string | undefined` — was an
+   * error at every push below. Widening the type to accept `undefined` is the
+   * fix rather than coercing each value, because the values genuinely are
+   * sometimes absent and `?? ''` would turn "no detail" into an empty detail that
+   * the template would then render.
+   */
+  interface InspectorErrorRow {
+    field?: string | undefined;
+    reason: string;
+    details?: string | undefined;
+  }
+
   /** Normalize string errors and AppError objects with strict instance scoping */
   const normalizedErrors = $derived.by(() => {
     if (instance === null) return [];
-    const list: { field?: string; reason: string; details?: string }[] = [];
+    const list: InspectorErrorRow[] = [];
 
     for (const err of errors) {
       if (typeof err === 'string') {

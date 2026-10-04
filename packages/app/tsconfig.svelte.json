@@ -1,0 +1,45 @@
+/**
+ * TypeScript config for `svelte-check`.
+ *
+ * **A separate config because `packages/app/tsconfig.json` excludes
+ * `src/renderer`.** That exclusion is right for `tsc --build` — the renderer is
+ * bundled by Vite and is not part of the Node-side program — but it means `tsc`
+ * never reads a single `.svelte` file, and an undefined identifier in a component
+ * is invisible to it. This config exists so `svelte-check` can read them.
+ *
+ * It is **not** part of the `tsc --build` project graph. Adding it to
+ * `references` would make `tsc` try to compile `.svelte` files, which it cannot,
+ * and would double-emit the renderer.
+ *
+ * `skipLibCheck` is on, and that is what excludes the four errors `svelte-check`
+ * otherwise reports: two in `@types/three` (`GPUTexture` is not in this
+ * TypeScript version's DOM lib) and two in Svelte's own `esrap` import
+ * resolution. All four are third-party declaration-file defects. Without
+ * `skipLibCheck` they fail the build for reasons no commit to this repo can fix,
+ * and a gate that cannot go green teaches people to ignore it.
+ *
+ * The comment sits **above** the object rather than inside it. Both are valid JSONC
+ * and both work for `tsc`, but a comment in the first key position defeats the
+ * block-comment strip a test uses to read this file as JSON — and a config that
+ * needs a bespoke parser to be inspected is a config that will be skipped the next
+ * time it is checked.
+ */
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "..",
+    "noEmit": true,
+    "composite": false,
+    "declaration": false,
+    "declarationMap": false,
+    "skipLibCheck": true,
+    "types": ["node"]
+  },
+  "include": [
+    "src/renderer/**/*.ts",
+    "src/renderer/**/*.svelte",
+    "src/ipc.ts",
+    "src/errors.ts"
+  ],
+  "exclude": ["../../node_modules", "dist"]
+}

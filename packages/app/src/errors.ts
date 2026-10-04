@@ -20,23 +20,33 @@ export interface AppError {
    */
   readonly scope: ErrorScope;
   /** Instance ID this error relates to, if scoped to an instance or field. */
-  readonly instanceId?: string;
+  readonly instanceId?: string | undefined;
   /** Field path (e.g., `params.width` or `width`) if scoped to a field. */
-  readonly fieldPath?: string;
+  readonly fieldPath?: string | undefined;
   /** Single concise summary line (e.g. "hazardCrate failed to load: Corrupted GLTF buffer"). */
   readonly short: string;
   /** Detailed error message, stack trace, or file paths (revealed via Details toggle). */
-  readonly details?: string;
+  readonly details?: string | undefined;
 }
 
 /** Factory to create an AppError */
+/**
+ * `?: string | undefined` on every optional, not `?: string`.
+ *
+ * Under `exactOptionalPropertyTypes` an optional property does not accept an
+ * explicit `undefined`, so every caller passing `instanceId: maybeUndefined` —
+ * which is what a narrowing expression produces — was an error. Widening the type
+ * is the fix rather than coercing at each call site, because these values really
+ * are sometimes absent, and `?? ''` would turn "no instance" into an empty
+ * instance id, which then dedupes against a real one (D44).
+ */
 export function createAppError(opts: {
-  id?: string;
+  id?: string | undefined;
   scope: ErrorScope;
-  instanceId?: string;
-  fieldPath?: string;
+  instanceId?: string | undefined;
+  fieldPath?: string | undefined;
   short: string;
-  details?: string;
+  details?: string | undefined;
 }): AppError {
   const id =
     opts.id ??

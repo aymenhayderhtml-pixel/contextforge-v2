@@ -126,9 +126,6 @@
   /** What the AI asked for, decided by the pure detector and nothing else. */
   const detected = $derived(detectContextInsufficient(reply));
 
-  /** The requested items that are not in the project. Never silently dropped. */
-  const missing = $derived(detected.requested.filter((item) => absent.has(item)));
-
   /**
    * The requests that can be attached: paths, excluding the ones proven absent.
    *
@@ -254,8 +251,8 @@
         logs,
         files: [...new Set([...attachments, ...asked])].sort(),
       });
-      const probeRefusal = store.refusalOf(probe);
-      if (probeRefusal !== null) {
+      const probeResult = store.valueOf(probe);
+      if (probeResult === null) {
         // The probe is a read-only question about the disk, so a refusal here is
         // not about the prompt on screen and must not replace it. Leaving
         // `refusal` alone is deliberate: the previous prompt is still the one the
@@ -263,8 +260,10 @@
         return;
       }
 
-      compiled = probe.value;
-      absent = new Set(pathRequests(probe.value).filter((file) => !probe.value.sections.some((s) => s.file === file)));
+      compiled = probeResult;
+      absent = new Set(
+        pathRequests(probeResult).filter((file) => !probeResult.sections.some((s) => s.file === file)),
+      );
     } finally {
       working = false;
     }
@@ -780,26 +779,41 @@
       {/if}
 
       {#if brief !== null}
+        {@const briefMarkdown = brief.markdown}
         <dl class="facts">
           <dt>Saved to</dt>
           <dd><code>{brief.path}</code></dd>
           <dt>Mode</dt>
           <dd>{brief.mode === 'oneShot' ? 'One-shot' : 'Interactive'}</dd>
-          <dt>Graph</dt>
-          <dd>{group(brief.stats.nodes)} node(s), {group(brief.stats.edges)} edge(s)</dd>
-          <dt>Prefabs</dt>
-          <dd>{group(brief.stats.prefabs)}</dd>
-          <dt>Instances</dt>
-          <dd>{group(brief.stats.instances)}</dd>
+          <!--
+            The counts only when the brief carries them. `readBrief` recovers them
+            from the markdown, and cannot for a brief this module did not write —
+            a hand-edited one, or one from an older version. The rows are omitted
+            rather than filled with zeros, because zero is a count and "we could not
+            read it" is not one. See `briefStatsFrom` in core's `brief.ts` (D50).
+          -->
+          {#if brief.stats !== null}
+            <dt>Graph</dt>
+            <dd>{group(brief.stats.nodes)} node(s), {group(brief.stats.edges)} edge(s)</dd>
+            <dt>Prefabs</dt>
+            <dd>{group(brief.stats.prefabs)}</dd>
+            <dt>Instances</dt>
+            <dd>{group(brief.stats.instances)}</dd>
+          {/if}
         </dl>
-        <pre class="prompt">{brief.markdown}</pre>
+        <pre class="prompt">{briefMarkdown}</pre>
         <div class="actions">
           <button
             type="button"
             class="secondary"
             onclick={async () => {
+              // `briefMarkdown`, captured by `{@const}` above, not `brief.markdown`.
+              // The `{@if}` guard does not narrow inside an async closure — the
+              // component can re-render and set `brief` to null before this runs,
+              // so reading it here was a real (if rare) crash, not a type nit. The
+              // `{@const}` is derived from the guarded value, so it is a string.
               try {
-                await navigator.clipboard.writeText(brief.markdown);
+                await navigator.clipboard.writeText(briefMarkdown);
               } catch {
                 // Silent for the same reason `copyPrompt` is: a clipboard the app
                 // never asked for is not worth a red line over text still on screen.

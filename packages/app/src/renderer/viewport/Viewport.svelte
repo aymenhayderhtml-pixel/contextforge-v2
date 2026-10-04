@@ -13,8 +13,17 @@
     changes. The viewport re-renders; it does not diff.
   - `prefabIndex` — an indexed registry from `indexPrefabDefinitions`. Updated
     whenever the main process rebuilds prefabs.
-  - `problems` — snapshot problems, shown as a notice but not rendered.
   - `onEdit` — called with a `setTransform` edit when the gizmo drag ends.
+
+  `problems` was accepted and then not used. It was listed here as "shown as a
+  notice but not rendered", which was **not true** — nothing in this component
+  read it. `svelte-check` reported the unused binding and the comment was the
+  reason it survived as long as it did: the doc said the value was used, so the
+  dead prop read as a documented decision. Removed rather than kept with a
+  corrected comment, because a prop nothing reads is a claim the viewport is
+  showing problems when it is not. `SceneScreen` still passes `snapshot.problems`
+  nowhere; if the notice is wanted it should be built here and the prop restored
+  with a test. See D50.
 -->
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
@@ -28,11 +37,10 @@
     store: EditorStore;
     scene: SceneFile;
     prefabIndex: PrefabIndex;
-    problems: readonly string[];
     onEdit: (edit: SceneEdit) => void;
   }
 
-  let { store, scene, prefabIndex, problems, onEdit }: Props = $props();
+  let { store, scene, prefabIndex, onEdit }: Props = $props();
 
   let container: HTMLDivElement;
   let vp: Viewport | null = null;
@@ -49,10 +57,24 @@
         store.setSpace(space);
       },
       onTransformCommit(change) {
+        /**
+         * `patch:`, not `transform:`.
+         *
+         * Core's `SceneEdit` union names this field `patch` — `applySceneEdit`
+         * reads `edit.patch` — and the viewport was sending `transform`, so
+         * `edit.patch` was `undefined` and `setTransform` received no vectors.
+         * Dragging a gizmo in the 3D viewport therefore committed an edit that
+         * moved nothing, with no error: the guard in `setTransform` is about the
+         * instance existing, not about the patch having content.
+         *
+         * Found by `svelte-check` (D50). It was invisible to `tsc` because it
+         * does not read `.svelte`, and invisible to the unit tests because they
+         * do not drag a gizmo.
+         */
         onEdit({
           op: 'setTransform',
           instanceId: change.instanceId,
-          transform: {
+          patch: {
             position: change.transform.position,
             rotation: change.transform.rotation,
             scale: change.transform.scale,

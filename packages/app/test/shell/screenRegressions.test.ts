@@ -386,15 +386,33 @@ describe('the four screens are all reachable', () => {
     ).toEqual([]);
   });
 
-  it('every screen id in App.svelte has a real component file behind it', () => {
-    const source = read('renderer/App.svelte');
+  /**
+   * The declared screen ids, read from whichever file owns the union.
+   *
+   * `Sidebar.svelte` since D50. Falling back to `App.svelte` keeps this working if
+   * the union ever moves back, which costs four lines and means a move breaks no
+   * test that was not about the move.
+   */
+  function screenIds(): string[] {
+    const source = /type ScreenId =/.test(read('renderer/Sidebar.svelte'))
+      ? read('renderer/Sidebar.svelte')
+      : read('renderer/App.svelte');
+    const union = /type ScreenId =([^;]+);/.exec(source);
+    expect(union, 'a ScreenId union should be declared in Sidebar.svelte or App.svelte').toBeTruthy();
+    return [...(union?.[1] ?? '').matchAll(/'([^']+)'/g)].map((m) => m[1] as string);
+  }
+
+  it('every screen id has a real component file behind it', () => {
     // Read the id union itself rather than an alternation copied here. A
     // hand-written list of screen names is a list that stops being true the
     // moment a screen is added — which is how the Graph screen could have been
     // skipped by this check on its first day.
-    const union = /type ScreenId =([^;]+);/.exec(source);
-    expect(union, 'App.svelte should declare a ScreenId union').toBeTruthy();
-    const ids = [...(union?.[1] ?? '').matchAll(/'([^']+)'/g)].map((m) => m[1]);
+    //
+    // Read from `Sidebar.svelte`, not `App.svelte`: the union moved there so the
+    // sidebar's `onSelect` and `App.svelte`'s `active` share one type instead of
+    // one `ScreenId` union and one bare `string` (D50). The producer of an id
+    // should own its type, and these two tests failed the moment it moved.
+    const ids = screenIds();
     expect(ids.length).toBeGreaterThanOrEqual(5);
 
     const dir = join(APP_SRC, 'renderer/screens');
@@ -409,8 +427,7 @@ describe('the four screens are all reachable', () => {
     // The sidebar renders `SCREENS`. A screen in the `ScreenId` union but not
     // in the array compiles fine and can never be clicked.
     const source = read('renderer/App.svelte');
-    const union = /type ScreenId =([^;]+);/.exec(source);
-    const declared = [...(union?.[1] ?? '').matchAll(/'([^']+)'/g)].map((m) => m[1]);
+    const declared = screenIds();
     const listed = [...source.matchAll(/\{\s*id:\s*'([^']+)'/g)].map((m) => m[1]);
     for (const id of declared) {
       expect(listed, `"${id}" is a ScreenId but no sidebar entry renders it`).toContain(id);

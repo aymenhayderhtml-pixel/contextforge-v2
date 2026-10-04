@@ -349,17 +349,21 @@ npm test            # vitest alone
 npm run typecheck   # tsc --build
 ```
 
-`npm run verify` runs five stages:
+`npm run verify` runs six stages:
 
 1. **`check:boundaries`** — core imports nothing from app; core's dependency
    allowlist is intact.
 2. **`check:three`** — the viewer and the game are on the same pinned `three`.
    Needs `CF_GAME_ROOT` if your game is not a sibling directory.
-3. **`typecheck`** — strict TypeScript across both packages.
-4. **`lint:prefabs`** — prefab purity rules.
-5. **`test`** — Vitest across `packages/*/test/`.
+3. **`typecheck`** — strict TypeScript across both packages. Also builds
+   `core/dist`.
+4. **`check:svelte`** — `svelte-check` over the renderer, which `tsc` does not
+   read at all. It must run **after** `typecheck`: it reads core through `dist`.
+   Fails on errors; two known warnings are listed in `AI.md` and do not fail.
+5. **`lint:prefabs`** — prefab purity rules.
+6. **`test`** — Vitest across `packages/*/test/`.
 
-Current result: **68 files, 1407 tests, exit 0.**
+Current result: **70 files, 1430 tests, exit 0.**
 
 ### If you are an AI agent
 
@@ -370,9 +374,10 @@ gotchas that cost the most time to learn — among them that the renderer may on
 crosses IPC, and that `kart-dash-3d-v2` is read-only.
 
 **Update `AI.md` in the same commit as any task that changes what it says.** A
-stale `AI.md` costs the next agent more time than it ever saved. A test,
-`packages/app/test/renderer/aiDocPaths.test.ts`, fails if any path it names stops
-existing, so it cannot drift away from the tree.
+stale `AI.md` costs the next agent more time than it ever saved. Two tests keep it
+honest: `packages/app/test/renderer/aiDocPaths.test.ts` fails if any path it names
+stops existing, and `packages/app/test/shell/svelteCheckGate.test.ts` asserts the
+type-check gate is still wired into `verify`.
 
 ---
 

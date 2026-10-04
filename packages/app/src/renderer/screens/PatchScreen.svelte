@@ -25,7 +25,6 @@
   import {
     CHANNELS,
     type PatchApplyResult,
-    type PatchFilePreview,
     type PatchHistoryEntry,
     type PatchPreview,
   } from '../../ipc.js';
@@ -107,14 +106,14 @@
    */
   async function refreshHistory(): Promise<void> {
     const result = await store.requestChannel(CHANNELS.patchHistory, {});
-    const reason = store.refusalOf(result);
-    if (reason !== null) {
-      refusal = reason;
+    const history = store.valueOf(result);
+    if (history === null) {
+      refusal = store.refusalOf(result);
       return;
     }
-    entries = result.value.entries;
-    canUndo = result.value.canUndo;
-    canRedo = result.value.canRedo;
+    entries = history.entries;
+    canUndo = history.canUndo;
+    canRedo = history.canRedo;
   }
 
   /** Parse the pasted reply and show what it would do. */
@@ -125,16 +124,16 @@
     applied = null;
     try {
       const result = await store.requestChannel(CHANNELS.previewPatch, { text });
-      const reason = store.refusalOf(result);
-      if (reason !== null) {
+      const previewed = store.valueOf(result);
+      if (previewed === null) {
         // A refusal here is not "the patch is bad" — it is "there is nothing to
         // show". Any previous diff is dropped so it cannot be read as the diff of
         // the reply now in the textarea.
         preview = null;
-        refusal = reason;
+        refusal = store.refusalOf(result);
         return;
       }
-      preview = result.value;
+      preview = previewed;
       refusal = null;
     } finally {
       previewing = false;
@@ -158,12 +157,12 @@
         text,
         ...(override ? { applyAnyway: true } : {}),
       });
-      const reason = store.refusalOf(result);
-      if (reason !== null) {
-        refusal = reason;
+      const appliedResult = store.valueOf(result);
+      if (appliedResult === null) {
+        refusal = store.refusalOf(result);
         return;
       }
-      applied = result.value;
+      applied = appliedResult;
       refusal = null;
       override = false;
       preview = null;
@@ -235,13 +234,6 @@
       ...expandedSyntaxDetails,
       [path]: !expandedSyntaxDetails[path],
     };
-  }
-
-  /** The syntax verdict for a file, as one line beside its diff. */
-  function syntaxLine(file: PatchFilePreview): string {
-    if (file.syntax.valid) return 'Syntax check passed';
-    const translated = translateSyntaxError(file.syntax.message, file.syntax.line, file.path);
-    return translated.plain;
   }
 </script>
 

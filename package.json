@@ -15,6 +15,7 @@
   "scripts": {
     "postinstall": "echo \"If npm failed on a peer-dependency conflict: use 'npm install --legacy-peer-deps' (see D17).\"",
     "typecheck": "tsc --build tsconfig.json",
+    "check:svelte": "svelte-check --tsconfig ./packages/app/tsconfig.svelte.json --threshold error --output human",
     "build": "tsc --build tsconfig.json",
     "test": "vitest run",
     "test:watch": "vitest",
@@ -22,10 +23,11 @@
     "check:three": "node scripts/check-three-pinned.mjs",
     "lint:prefabs": "tsc --build tsconfig.json && node scripts/lint-prefabs.mjs",
     "check:native": "npm run check:native -w @contextforge/app",
-    "verify": "npm run check:boundaries && npm run check:three && npm run typecheck && npm run lint:prefabs && npm test"
+    "verify": "npm run check:boundaries && npm run check:three && npm run typecheck && npm run check:svelte && npm run lint:prefabs && npm test"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",
+    "svelte-check": "4.7.6",
     "typescript": "^5.7.2",
     "vite": "^6.3.6",
     "vitest": "^5.0.3"
