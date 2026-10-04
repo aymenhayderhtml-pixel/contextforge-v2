@@ -91,6 +91,22 @@
     return groups;
   });
 
+  /**
+   * Which files changed but could not be diffed, and why.
+   *
+   * Keyed by path so the per-file panel can say "no diff" for exactly the file
+   * the refusal is about, rather than a blanket notice the developer has to
+   * match up against a list of files themselves.
+   */
+  const diffNotShownByPath = $derived.by(() => {
+    const map = new Map<string, string>();
+    for (const note of preview?.diffNotShown ?? []) {
+      const path = note.slice(0, note.indexOf(': '));
+      if (path !== '') map.set(path, note.slice(path.length + 2));
+    }
+    return map;
+  });
+
   onDestroy(() => {
     // Nothing to release: every request is a single invoke whose lifetime the
     // promise owns. Stated here so the absence of a teardown is a decision
@@ -375,7 +391,19 @@
           {/each}
 
           {#if file.diff === ''}
-            <p class="muted">No changes to this file.</p>
+            <!--
+              Three states share an empty `diff`, and only one of them means
+              "unchanged". A file that changed but was too large to diff must not
+              read as "No changes" — that is a confident wrong answer about
+              whether a write is about to happen, and it is the exact failure D30
+              exists to prevent (D53).
+            -->
+            {@const notShown = diffNotShownByPath.get(file.path)}
+            {#if notShown !== undefined}
+              <p class="muted">No diff shown — {notShown}</p>
+            {:else}
+              <p class="muted">No changes to this file.</p>
+            {/if}
           {:else}
             <pre class="diff">{file.diff}</pre>
           {/if}

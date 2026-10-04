@@ -198,6 +198,8 @@ export {
 
 export {
   DEFAULT_CONTEXT_LINES,
+  DiffTooLargeError,
+  MAX_DIFF_LINES,
   formatUnifiedDiff,
   generateFlatDiff,
   generateUnifiedDiff,

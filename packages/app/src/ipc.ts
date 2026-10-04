@@ -397,6 +397,18 @@ export interface PatchPreview {
   blockedReason: string;
   /** Blocks parsed. `### FILE:` blocks count as one write each. */
   blockCount: number;
+  /**
+   * One sentence per file whose diff could not be produced, each naming the
+   * path and why. Empty in the normal case.
+   *
+   * A file lands here when it is past core's `MAX_DIFF_LINES`: an exact diff of
+   * two files that size needs an LCS table big enough to kill the process, so
+   * core refuses and this says so (D53). The patch may still apply — only the
+   * preview is missing — which is why this is separate from `blockedReason`
+   * rather than appended to it: a developer must not be told "cannot apply" for
+   * a file they could have applied.
+   */
+  diffNotShown: string[];
 }
 
 /** What a patch actually did. */

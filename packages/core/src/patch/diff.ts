@@ -6,10 +6,14 @@
  * longest-common-subsequence line diff with a fixed context window — the same
  * shape `git diff` produces, and the same shape v1 emitted.
  *
- * It is a plain LCS diff rather than Myers: patches are small (an AI's answer is
- * typically tens of lines), and LCS is a dozen lines of code that cannot be
- * subtly wrong. At the scale where Myers would matter, the developer would be
- * looking at a wrong patch long before the diff algorithm became the problem.
+ * It is a plain LCS diff rather than Myers, but ONLY because the LCS table is now
+ * bounded. The original header justified itself with "patches are small", and
+ * that reasoning was about the wrong thing: an AI's *patch* is tens of lines, but
+ * the **file it is patching** is unbounded. A 40,000-line file built a 40,000²
+ * table and killed the V8 isolate with `FATAL: heap out of memory` — a hard
+ * SIGABRT of the Electron *main process*, not a catchable throw. See
+ * {@link MAX_DIFF_LINES} for the bound and {@link DiffTooLargeError} for what
+ * happens past it (D53).
  */
 
 /** One line of a diff. */
@@ -22,6 +26,51 @@ export interface DiffChunk {
   /** 1-based line number in the "after" text; null for deletions. */
   afterLine: number | null;
 }
+
+/**
+ * The refusal raised when a file is too large to diff exactly.
+ *
+ * Thrown rather than returned, because every existing caller treats the diff as
+ * infallible and a silently-empty diff is indistinguishable from "no changes" —
+ * exactly the plausible-looking wrong answer this app exists to prevent. The
+ * handler in `ipcHandlers.ts` turns the throw into an `ok:false` with this
+ * sentence attached, so a developer sees why rather than an empty preview.
+ *
+ * Follows `IncompleteBriefError`'s shape (D20): the class carries its own
+ * numbers, and the message says what to do instead of only what went wrong.
+ */
+export class DiffTooLargeError extends Error {
+  readonly code = 'DIFF_TOO_LARGE';
+
+  constructor(
+    readonly beforeLines: number,
+    readonly afterLines: number,
+    readonly maxLines: number,
+  ) {
+    super(
+      `Cannot show a diff for this file — it is ${Math.max(beforeLines, afterLines)} lines, ` +
+        `over the ${maxLines}-line limit for an exact diff.\n\n` +
+        `An exact diff of two files that size needs a table with more than ` +
+        `${(maxLines * maxLines).toLocaleString('en-US')} entries, which is enough to crash the app. ` +
+        `Patch the file in smaller pieces, or narrow the EDIT block to the region you are changing.`,
+    );
+    this.name = 'DiffTooLargeError';
+  }
+}
+
+/**
+ * Longest file, in lines, that gets an exact diff.
+ *
+ * 4,000 × 4,000 is 16 million cells. Measured peak RSS for the table alone was
+ * 639 MB at 8,000 lines and 2,216 MB at 16,000, so 4,000 lines sits at roughly
+ * 160 MB — survivable in the main process, and far past any real patch preview.
+ *
+ * This is a cap on LINES, not on cells, deliberately: a cell cap would let a
+ * 40,000 × 1 file through, which is harmless, but it would also make the
+ * worst case — the square one — the only thing the cap describes. A line cap is
+ * the shape a developer can reason about ("my file is too big to preview").
+ */
+export const MAX_DIFF_LINES = 4000;
 
 /** Lines of context kept around each change. */
 export const DEFAULT_CONTEXT_LINES = 2;
@@ -40,6 +89,8 @@ export interface DiffHunk {
  *
  * Returns one hunk per changed region. When nothing differs the result is empty,
  * which the Patch screen renders as "no changes".
+ *
+ * Throws {@link DiffTooLargeError} when either side exceeds {@link MAX_DIFF_LINES}.
  */
 export function generateUnifiedDiff(
   before: string,
@@ -48,6 +99,13 @@ export function generateUnifiedDiff(
 ): DiffHunk[] {
   const beforeLines = splitLines(before);
   const afterLines = splitLines(after);
+
+  // The refusal, stated in the caller's terms: which file, how big, what limit.
+  // Checked before any allocation, so the oversized case costs a line count.
+  const largest = Math.max(beforeLines.length, afterLines.length);
+  if (largest > MAX_DIFF_LINES) {
+    throw new DiffTooLargeError(beforeLines.length, afterLines.length, MAX_DIFF_LINES);
+  }
 
   const operations = diffLines(beforeLines, afterLines);
 

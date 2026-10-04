@@ -59,6 +59,7 @@ import {
   extractFileReferences,
   extractGodotProject,
   extractJsProject,
+  DiffTooLargeError,
   findOrphans,
   focusNeighbourhood,
   formatUnifiedDiff,
@@ -1362,13 +1363,46 @@ export class AppBackend {
     if (!outcome.ok) return fail(outcome.reason);
 
     const plan = outcome.plan;
-    const files: PatchFilePreview[] = plan.files.map((file) => ({
-      path: file.path,
-      diff: file.changed ? formatUnifiedDiff(file.path, file.before ?? '', file.after) : '',
-      created: file.before === null,
-      syntaxFailed: !file.syntax.valid,
-      syntax: file.syntax,
-    }));
+
+    /**
+     * The diff, or the reason there is not one.
+     *
+     * `formatUnifiedDiff` refuses a file past core's `MAX_DIFF_LINES` instead of
+     * building an LCS table big enough to OOM the isolate, so this loop has to
+     * catch. Per file, not for the whole preview: a patch that touches one huge
+     * file and three small ones is still worth previewing, and refusing the lot
+     * would hide the three the developer can act on. The small files keep their
+     * real diffs; the large one carries the sentence saying why it does not.
+     *
+     * Before this the throw escaped and took down the main process (D53).
+     */
+    const diffFailures: string[] = [];
+    const files: PatchFilePreview[] = plan.files.map((file) => {
+      if (!file.changed) {
+        return { path: file.path, diff: '', created: file.before === null, syntaxFailed: !file.syntax.valid, syntax: file.syntax };
+      }
+      try {
+        return {
+          path: file.path,
+          diff: formatUnifiedDiff(file.path, file.before ?? '', file.after),
+          created: file.before === null,
+          syntaxFailed: !file.syntax.valid,
+          syntax: file.syntax,
+        };
+      } catch (error) {
+        if (error instanceof DiffTooLargeError) {
+          diffFailures.push(`${file.path}: ${error.message.split('\n')[0]}`);
+          return {
+            path: file.path,
+            diff: '',
+            created: file.before === null,
+            syntaxFailed: !file.syntax.valid,
+            syntax: file.syntax,
+          };
+        }
+        throw error;
+      }
+    });
 
     const blockedReason = blockedReasonFor(plan);
     return ok({
@@ -1379,6 +1413,16 @@ export class AppBackend {
       canApplyAnyway: canApplyAnywayFor(plan),
       blockedReason,
       blockCount: plan.blockCount,
+      /**
+       * A missing diff is a visible gap, not an empty one (D30).
+       *
+       * Its OWN field rather than an addition to `blockedReason`: the renderer
+       * only displays that string when `!applicable`, so a diff note parked
+       * there would be invisible in exactly the case it exists to explain. This
+       * is also deliberately not a failure — the patch itself may well apply,
+       * and refusing would stop a developer doing something they can do.
+       */
+      diffNotShown: diffFailures,
     });
   }
 
