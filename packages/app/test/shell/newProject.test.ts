@@ -140,7 +140,7 @@ describe('New Project — the scaffold prompt is gated on a real idea', () => {
 describe('New Project — the scaffold channels', () => {
   it('refuses a prompt for an incomplete brief, naming what is missing', async () => {
     const { AppBackend } = await import('../../src/electron/ipcHandlers.js');
-    const app = new AppBackend(() => {});
+    const app = new AppBackend(() => {}, { allowUnpickedRoot: 'test-only' });
 
     const result = app.scaffoldPrompt({ name: 'star-crawler', idea: '' });
     expect(result.ok).toBe(false);
@@ -150,7 +150,7 @@ describe('New Project — the scaffold channels', () => {
 
   it('returns a prompt for a complete brief, embedding the idea verbatim', async () => {
     const { AppBackend } = await import('../../src/electron/ipcHandlers.js');
-    const app = new AppBackend(() => {});
+    const app = new AppBackend(() => {}, { allowUnpickedRoot: 'test-only' });
 
     const idea = 'You drive a hover car around a collapsing space station.';
     const result = app.scaffoldPrompt({ name: 'star-crawler', idea });
@@ -163,7 +163,7 @@ describe('New Project — the scaffold channels', () => {
     // second way of saying the same thing, and the screen would have to handle
     // both shapes.
     const { AppBackend } = await import('../../src/electron/ipcHandlers.js');
-    const app = new AppBackend(() => {});
+    const app = new AppBackend(() => {}, { allowUnpickedRoot: 'test-only' });
 
     const result = app.scaffoldProblems({ name: '', idea: '' });
     expect(result.ok).toBe(true);
@@ -172,7 +172,7 @@ describe('New Project — the scaffold channels', () => {
 
   it('problems refuses a request it cannot understand', async () => {
     const { AppBackend } = await import('../../src/electron/ipcHandlers.js');
-    const app = new AppBackend(() => {});
+    const app = new AppBackend(() => {}, { allowUnpickedRoot: 'test-only' });
 
     const result = app.scaffoldProblems(null as never);
     expect(result.ok).toBe(false);
@@ -191,7 +191,7 @@ describe('New Project — the scaffold channels', () => {
         },
         removeHandler: () => {},
       } as never,
-      new AppBackend(() => {}),
+      new AppBackend(() => {}, { allowUnpickedRoot: 'test-only' }),
     );
     expect(registered).toContain(CHANNELS.scaffoldPrompt);
     expect(registered).toContain(CHANNELS.scaffoldProblems);

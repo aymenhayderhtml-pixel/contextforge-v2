@@ -22,8 +22,12 @@
  * changes model behaviour.
  */
 
-import { existsSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { readFileSync } from 'node:fs';
+import {
+  resolveInsideRoot,
+  resolveInsideRootOrThrow,
+  type ResolveInsideRootResult,
+} from '../fs/resolveInsideRoot.js';
 import { dependentsOf, normalizeDeps } from '../graph/reverse.js';
 import { formatGdExport, formatGdFunction, parseGdScript } from '../parse/gdscript.js';
 import { formatJsExport, parseJsModule } from '../parse/js.js';
@@ -142,12 +146,17 @@ export function compileContext(options: CompileOptions): CompiledContext {
     maxChars = DEFAULT_MAX_CHARS,
   } = options;
 
+  /**
+   * Containment-aware existence.
+   *
+   * Was `existsSync(join(projectRoot, file))`, which answers "is there a file at
+   * this name" and silently means "somewhere that name leads, including through
+   * a symlink out of the tree". Every caller below now treats `false` as "not a
+   * file in this project", which is the only meaning that is safe.
+   */
   const exists = (file: string): boolean => {
-    try {
-      return existsSync(join(projectRoot, file));
-    } catch {
-      return false;
-    }
+    const inside = resolveInsideRoot(projectRoot, file);
+    return inside.ok && inside.value.existsOnDisk;
   };
 
   const ranked = rankRelevantFiles({
@@ -157,20 +166,68 @@ export function compileContext(options: CompileOptions): CompiledContext {
     exists,
   });
 
-  const fullRequested = extractFullAttachmentRequests(options);
+  const gaps: string[] = [];
+
+  /**
+   * Refuse a path that leaves the project, once, and say why.
+   *
+   * The refusal is a **gap**, not a throw and not a silent skip: the developer
+   * pasted an AI's `NEED:` line and asked for a file. Attaching nothing without
+   * a word leaves them unable to tell "you were refused" from "the AI was
+   * ignored", and a prompt-injected reply naming `~/.ssh/id_rsa` must produce a
+   * visible sentence rather than a quietly shorter prompt (SPEC R9).
+   *
+   * `reported` keeps it to one line per path: the same escape named by both a
+   * `NEED:` and the `files` array is one thing that went wrong.
+   */
+  const reported = new Set<string>();
+  const refusalGap = (file: string, verdict: Extract<ResolveInsideRootResult, { ok: false }>): void => {
+    if (reported.has(file)) return;
+    reported.add(file);
+    gaps.push(
+      `Not attached: "${file}" is not a file inside the project. ${verdict.reason}`,
+    );
+  };
+
+  const fullRequestedRaw = extractFullAttachmentRequests(options);
+
+  // One pass, before anything is read: every path named from *any* source —
+  // `options.files` (the app's ticked-box channel), `NEED:` and
+  // `CONTEXT INSUFFICIENT:` in the pasted logs, and `options.targetFile` — is
+  // decided here. Three sources, one rule, one sentence each. Previously the
+  // app guarded only the first, which is how SEC-2 reached a file outside the
+  // project through a pasted reply.
+  const fullRequested = new Set<string>();
+  for (const file of fullRequestedRaw) {
+    const inside = resolveInsideRoot(projectRoot, file);
+    if (inside.ok) fullRequested.add(inside.value.relativePath);
+    else refusalGap(file, inside);
+  }
 
   // The target is whatever the caller named, else the highest-ranked file.
-  const targetFile = options.targetFile ?? ranked[0]?.file ?? null;
+  // An explicit `targetFile` is checked on the same terms as everything else:
+  // it was the one path SEC-1 found unguarded.
+  const namedTarget = options.targetFile;
+  let targetFile: string | null = null;
+  if (namedTarget !== undefined) {
+    const inside = resolveInsideRoot(projectRoot, namedTarget);
+    if (inside.ok) targetFile = inside.value.relativePath;
+    else {
+      refusalGap(namedTarget, inside);
+      targetFile = null;
+    }
+  }
+  if (targetFile === null) targetFile = ranked[0]?.file ?? null;
   const targetLine = options.targetLine ?? ranked.find((r) => r.file === targetFile)?.line ?? null;
 
   const sections: ContextSection[] = [];
-  const gaps: string[] = [];
   const parts: string[] = [];
 
   const requestedFileSizes = new Map<string, number>();
 
   if (targetFile !== null) {
-    if (!exists(targetFile)) {
+    const inside = resolveInsideRoot(projectRoot, targetFile);
+    if (!inside.ok || !exists(targetFile)) {
       gaps.push(
         `The target file "${targetFile}" does not exist in the project. It may have been moved or renamed.`,
       );
@@ -181,19 +238,24 @@ export function compileContext(options: CompileOptions): CompiledContext {
       sections.push(built.section);
       if (fullRequested.has(targetFile)) {
         try {
-          const source = readFileSync(join(projectRoot, targetFile), 'utf-8');
+          const source = readFileSync(inside.value.absolutePath, 'utf-8');
           requestedFileSizes.set(targetFile, source.length);
         } catch {}
       }
     }
   }
 
-  // Any other file explicitly requested in full by the AI or caller
+  // Any other file explicitly requested in full by the AI or caller.
+  //
+  // The read is the whole of SEC-2: this loop attaches a file's bytes to the
+  // prompt verbatim, and the path came from pasted text. It is behind two gates
+  // now — `fullRequested` only holds paths that survived `resolveInsideRoot`
+  // above, and the read itself opens `absolutePath`, never a re-derived `join`.
   for (const file of [...fullRequested].sort()) {
     if (file === targetFile) continue;
-    if (!exists(file)) continue;
-    const absolute = join(projectRoot, file);
-    const source = readFileSync(absolute, 'utf-8');
+    const inside = resolveInsideRoot(projectRoot, file);
+    if (!inside.ok || !exists(file)) continue;
+    const source = readFileSync(inside.value.absolutePath, 'utf-8');
     requestedFileSizes.set(file, source.length);
     parts.push(`### FILE: ${file} (full source)\n\`\`\`\n${source}\n\`\`\``);
     sections.push({
@@ -301,7 +363,7 @@ function buildTargetSection(
   gaps: string[],
   forceFull = false,
 ): BuiltSection {
-  const absolute = join(projectRoot, file);
+  const absolute = resolveInsideRootOrThrow(projectRoot, file).absolutePath;
   const source = readFileSync(absolute, 'utf-8');
 
   if (fullFiles || forceFull) {
@@ -403,7 +465,7 @@ function buildSignatureSection(
   projectRoot: string,
   file: string,
 ): BuiltSection | null {
-  const source = readFileSync(join(projectRoot, file), 'utf-8');
+  const source = readFileSync(resolveInsideRootOrThrow(projectRoot, file).absolutePath, 'utf-8');
   const outline = buildOutline(file, source);
   if (outline.trim() === '') return null;
 
@@ -425,7 +487,9 @@ function buildDependentsSection(
   const dependents = dependentsOf(manifest, targetFile);
   if (dependents.size === 0) return null;
 
-  const existing = [...dependents].filter((id) => existsSync(join(projectRoot, id))).sort();
+  const existing = [...dependents]
+    .filter((id) => resolveInsideRoot(projectRoot, id).ok)
+    .sort();
   if (existing.length === 0) return null;
 
   const lines = existing.map((id) => `// ${id}`).join('\n');
@@ -555,9 +619,11 @@ SURGICAL PATCH CONTRACT
 function buildFullBody(projectRoot: string, ranked: RankedFile[]): string {
   const parts: string[] = [];
   for (const candidate of ranked.slice(0, AUTO_ATTACH_COUNT + 3)) {
-    const absolute = join(projectRoot, candidate.file);
-    if (!existsSync(absolute)) continue;
-    parts.push(`### FILE: ${candidate.file}\n\`\`\`\n${readFileSync(absolute, 'utf-8')}\n\`\`\``);
+    const inside = resolveInsideRoot(projectRoot, candidate.file);
+    if (!inside.ok) continue;
+    parts.push(
+      `### FILE: ${candidate.file}\n\`\`\`\n${readFileSync(inside.value.absolutePath, 'utf-8')}\n\`\`\``,
+    );
   }
   return parts.length > 0 ? parts.join('\n\n') : '(No files could be attached.)';
 }
@@ -693,7 +759,7 @@ function listFunctions(source: string, file: string): string {
  * kind of confident wrong answer this app exists to prevent.
  */
 function detectEngine(manifest: Manifest | undefined, projectRoot: string, ranked: RankedFile[]): string {
-  if (existsSync(join(projectRoot, 'project.godot'))) return 'Godot 4.x (GDScript)';
+  if (resolveInsideRoot(projectRoot, 'project.godot').ok) return 'Godot 4.x (GDScript)';
 
   // A `.gd` file in the ranked set means this is a Godot project even when no
   // manifest was supplied and `project.godot` was not found. Naming the wrong

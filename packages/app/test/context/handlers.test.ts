@@ -98,7 +98,7 @@ function write(relativePath: string, contents: string): void {
 
 /** A backend over the temp project, with the project already open. */
 async function openBackend(): Promise<AppBackend> {
-  const backend = new AppBackend(() => {});
+  const backend = new AppBackend(() => {}, { allowUnpickedRoot: 'test-only' });
   const opened = await backend.openProject({ root: project });
   if (!opened.ok) {
     throw new Error(`the fixture project could not be opened: ${opened.reason}`);

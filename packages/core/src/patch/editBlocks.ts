@@ -27,7 +27,8 @@
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { dirname } from 'node:path';
+import { resolveInsideRootOrThrow } from '../fs/resolveInsideRoot.js';
 import { findTargetMatch } from './finder.js';
 import { validateContentSyntax, type SyntaxCheckResult } from './syntaxCheck.js';
 
@@ -116,11 +117,27 @@ export function parseEditBlocks(text: string): EditBlock[] {
 }
 
 /**
- * Normalise a patch path to a project-relative id.
+ * Normalise a patch path to a project-relative id. **Lexical only.**
  *
- * Returns null for a path that escapes the project root. An AI that emits
- * `../../etc/passwd` must not be able to steer a write outside the project —
- * the developer never sees the raw path, only the rendered diff.
+ * Returns null for a path with a `..` segment, an absolute path (stripped, not
+ * refused — see below) or an empty result.
+ *
+ * ## Not the containment check — do not use it as one
+ *
+ * This function is still exported because it is the documented normaliser, but
+ * neither patch engine calls it any more. It cannot see a symlink: `normalize`
+ * returns `src/link.js` whether `src/link.js` is a real file or a link to
+ * `/etc/passwd`, and both spellings come back identical. Every read and write
+ * goes through `resolveInsideRoot` (`fs/resolveInsideRoot.ts`), which asks the
+ * filesystem. See D51.
+ *
+ * The one behaviour worth naming because it is surprising: a leading `/` is
+ * **stripped**, so `/etc/cron.d/pwn` becomes `etc/cron.d/pwn` *inside* the
+ * project rather than being refused. That is inert — `resolveInsideRoot`
+ * refuses an absolute path outright now, so this function is no longer on any
+ * path to a write — but it was recorded in the audit as a deviation from
+ * `ipc.ts`'s "refused, not sanitised" and it stayed true until D51 removed the
+ * call.
  */
 export function normalizePatchPath(rawPath: string): string | null {
   const normalized = rawPath
@@ -171,7 +188,7 @@ export function applyEditBlocks(
     );
   }
 
-  const byFile = groupByFile(blocks);
+  const byFile = groupByFile(projectRoot, blocks);
   const applied: AppliedEdit[] = [];
   const alreadyApplied: AppliedEdit[] = [];
   const failed: FailedEdit[] = [];
@@ -179,7 +196,10 @@ export function applyEditBlocks(
   const prepared: PreparedWrite[] = [];
 
   for (const [path, fileBlocks] of byFile) {
-    const absolutePath = join(projectRoot, path);
+    // The absolute path is the one `groupByFile` already proved is inside the
+    // root. Re-resolving here would be a second answer to the same question, and
+    // two answers is how the two drift apart.
+    const absolutePath = resolveInsideRootOrThrow(projectRoot, path).absolutePath;
 
     if (!existsSync(absolutePath)) {
       fileBlocks.forEach((_, index) => {
@@ -289,17 +309,19 @@ interface PreparedWrite {
   content: string;
 }
 
-/** Group blocks by file, preserving their order within each file. */
-function groupByFile(blocks: EditBlock[]): Map<string, EditBlock[]> {
+/**
+ * Group blocks by file, preserving their order within each file.
+ *
+ * `projectRoot` is threaded in because grouping is now a *containment*
+ * decision, not a string tidy-up: the grouped key is the path core will open,
+ * and that is decided by `resolveInsideRoot` (see `fs/resolveInsideRoot.ts`).
+ * A symlinked file inside the project resolves outside it, and this is where
+ * that is caught — before a single byte is read.
+ */
+function groupByFile(projectRoot: string, blocks: EditBlock[]): Map<string, EditBlock[]> {
   const byFile = new Map<string, EditBlock[]>();
   for (const block of blocks) {
-    const path = normalizePatchPath(block.path);
-    if (path === null) {
-      throw new Error(
-        `Invalid file path in patch: "${block.path}". ` +
-          'Paths must stay inside the project directory.',
-      );
-    }
+    const path = resolveInsideRootOrThrow(projectRoot, block.path).relativePath;
     const existing = byFile.get(path);
     if (existing) existing.push(block);
     else byFile.set(path, [block]);

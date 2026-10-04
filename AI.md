@@ -71,13 +71,18 @@ packages/core/          @contextforge/core — pure, headless. No DOM, no app im
                         manifest.ts, labels.ts (label rule)
   src/patch/            FIND/REPLACE + EDIT blocks, diffs, syntax checks
   src/scene/            scene file, edits, prefabs, slots, scaffold prompt
-  src/context/          compiler (rank -> compile -> slice), brief
+  src/context/          compiler (rank -> compile -> slice), brief. The NEED:/files
+                        attachment loop is the SEC-2 sink — guarded by D51.
   src/history/          one undo/redo stack, keyed by project path
+  src/fs/               resolveInsideRoot — the ONE containment check (D51). Every
+                        reader/writer of a project-relative path routes here.
 
 packages/app/           @contextforge/app — the Electron shell
   src/electron/
     main.ts             window, menu, watcher
     ipcHandlers.ts      EVERY channel handler lives here. ~2000 lines.
+                        openProject only accepts a picked root (SEC-4, D51);
+                        tests pass deps.allowUnpickedRoot: 'test-only'.
     preload.cts         contextBridge; the only renderer -> main path
   src/ipc.ts            CHANNELS const, Result<T>/ok()/fail(), request + event types
   src/renderer/
@@ -141,6 +146,9 @@ Push events, main to renderer, not in `CHANNELS`:
 | A build says "core must be built" | `scripts/lint-prefabs.mjs:26` — run `npm run typecheck` first |
 | `svelte-check` reports phantom type errors | Core's `.d.ts` is stale — force a full core rebuild (see Gotchas, 9) |
 | A drag in the 3D viewport does nothing | `Viewport.svelte` `onTransformCommit` — the field is `patch:`, not `transform:` (D50) |
+| A path is refused as "outside the project" | Real, almost always a symlink. `resolveInsideRoot` refuses by design (D51) |
+| A test says "was not chosen in the folder dialog" | The test opened a fixture directly; it needs `deps: { allowUnpickedRoot: 'test-only' }` |
+| `ENOENT` escapes from compileContext | Something reads `existsOnDisk`, not `ok` — they are different questions (D51) |
 
 ---
 
@@ -200,12 +208,25 @@ Push events, main to renderer, not in `CHANNELS`:
     the block suppresses nothing — and if it lists a code the rule does not raise,
     it silently looks like it worked.
 
-11. **A JSONC file cannot be comment-stripped with a regex if its values contain
-    glob stars.** `tsconfig.svelte.json`'s `include` holds `src/renderer/**/*.svelte`,
-    and those two characters are a comment terminator to any block-comment pattern.
-    Stripping rewrote the globs to `src/renderer*.svelte`, which still parses — so
-    the failure is a wrong value, not a syntax error. `svelteCheckGate.test.ts` has
-    a character-by-character scanner for this reason.
+11. **`ok` and `existsOnDisk` are different questions.** `resolveInsideRoot` answers
+    *may this path be written*; it does not answer *is there a file there yet*. A
+    `### FILE:` target that does not exist is `ok: true, existsOnDisk: false`, and
+    collapsing the two makes `readFileSync` throw (D51).
+
+12. **`relative(anchor, target)`, never the reverse.** `relative(target, anchor)` is
+    `..` for every file, and `resolve` then walks out of the project — so the
+    containment check refuses every legitimate path and looks like it works while
+    refusing to open anything (D51).
+
+13. **The anchor walk starts at the target's *parent*, so it cannot see a symlink at
+    the final component.** Checking only the directories above is not enough; the
+    target itself has to be `realpath`'d and re-checked when it exists (D51).
+
+14. **A JSONC file cannot be comment-stripped with a regex if its values contain
+    glob stars** — `tsconfig.svelte.json`'s `**/*.svelte` includes are a comment
+    terminator to any block-comment pattern. Stripping rewrites the globs and the
+    file still parses, so the failure is a wrong *value*, not a syntax error.
+    `svelteCheckGate.test.ts` has a character scanner for this.
 
 ---
 
@@ -233,7 +254,7 @@ being checked — see D17 and D19.
 | D36 keyword and runtime-error filtering | D37 toast stacking and problem routing | D38 plain-English syntax errors | D39 Context screen reachability |
 | D40 end-to-end Electron automation | D41 full-source attachment for AI | D42 executable prefab bundling | D43 screenshots that prove their own state |
 | D44 one list, one count for Problems | D45 graph analysis runs in main, not the renderer | D46 the New Project gate is core's `checkBrief` | D47 a generator refuses to overwrite |
-| D48 an asset node only if the file exists | D49 graph labels stagger on row geometry | D50 `svelte-check` is in `verify` | |
+| D48 an asset node only if the file exists | D49 graph labels stagger on row geometry | D50 `svelte-check` is in `verify` | D51 one containment helper + a root the renderer cannot name |
 | D17 peer-deps fallback (**reconstructed**) | D18 key a generic event type by value | D19 shape before relations (**reconstructed**) | |
 
 ---
@@ -252,8 +273,15 @@ being checked — see D17 and D19.
   makes the separator keyboard-reachable. Svelte 5.57.1 does not honour a
   multi-code `svelte-ignore` for this rule. `verify` runs `--threshold error`, so
   they do not fail the build — but they will print, and that is intentional.
+- **SEC-5 is NOT fixed.** The context compiler *reports* an over-budget prompt but
+  does not enforce it, so `maxChars: 0` returns whatever the inputs produce. A
+  behaviour change with real cost consequences, not a containment defect (D51).
+- **The `audit/2026-10` branch is a stale snapshot and its `AUDIT.md` is UNTRACKED**
+  — never committed, so reading it from git does not work. Find it in the
+  the `contextforge-audit` worktree beside this repo, under its `docs` folder.
+  **Three of its findings are wrong** (D51) — read D51 before working from it.
 - **`docs/DEPENDENCIES.md:19` says tree-sitter is pinned to 0.22.x; it is not**
-  (`packages/core` declares `^0.25.1`). Noted in D17 and left unedited there.
+  (`packages/core` declares `^0.25.1`). Noted in D17, left unedited there.
 - **Graph labels assume left-to-right rows** and two fixed vertical lanes. True for
   `breadthfirst`; a third lane is not pre-built.
 - **Zoom does not re-measure label widths**, so at high zoom the margins are

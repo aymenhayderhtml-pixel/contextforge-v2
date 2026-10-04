@@ -92,10 +92,13 @@ function cancelling(): ReturnType<typeof fakePicker> {
 
 /** A backend with a recording `send` and, optionally, a fake dialog. */
 function backend(picker?: FolderPickerLike): AppBackend {
-  return new AppBackend(
-    () => {},
-    picker === undefined ? {} : { picker },
-  );
+  return new AppBackend(() => {}, {
+    ...(picker === undefined ? {} : { picker }),
+    // SEC-4: these tests drive the folder dialog directly, and opening a project
+    // without one is exactly the path `openProject` now refuses. Named here rather
+    // than silently, so a reader knows the bypass is deliberate and test-scoped.
+    allowUnpickedRoot: 'test-only',
+  });
 }
 
 /** The registered handler for a channel, as the renderer would reach it. */
@@ -445,7 +448,7 @@ describe('the dialog injection', () => {
     // `new AppBackend(send)` — the shape `main.ts` used before this change and the
     // shape every existing test uses — must keep type-checking and running. The
     // picker is optional, so nothing has to be threaded through to add it.
-    const app = new AppBackend(() => {});
+    const app = new AppBackend(() => {}, { allowUnpickedRoot: 'test-only' });
     const listeners = registeredHandlers(app);
 
     expect(listeners.get(CHANNELS.pickFolder)).toBeTypeOf('function');

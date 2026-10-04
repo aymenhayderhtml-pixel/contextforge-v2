@@ -158,6 +158,19 @@ export {
 // ── Patch engine ─────────────────────────────────────────────────────────────
 export { findTargetMatch, type MatchResult } from './patch/finder.js';
 
+// ── Containment ──────────────────────────────────────────────────────────────
+// The one function a project-relative path goes through before it becomes a
+// file. Every reader and writer below routes through it; see D51.
+export {
+  forgetRoot,
+  isInsideRoot,
+  resolveInsideRoot,
+  resolveInsideRootOrThrow,
+  type ContainmentRefusal,
+  type ResolvedInsideRoot,
+  type ResolveInsideRootResult,
+} from './fs/resolveInsideRoot.js';
+
 export {
   applyEditBlocks,
   normalizePatchPath,

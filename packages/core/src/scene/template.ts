@@ -23,7 +23,8 @@
  */
 
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { dirname } from 'node:path';
+import { resolveInsideRoot } from '../fs/resolveInsideRoot.js';
 import { SCENE_SCHEMA_VERSION, type SceneFile } from './scene.schema.js';
 import { serializeScene } from './sceneFile.js';
 
@@ -151,6 +152,20 @@ export interface GeneratedProject {
  * generator would write are checked, so pointing it at a folder that also holds
  * `src/` or a `node_modules/` is still refused only if one of *its* six is
  * present.
+ *
+ * ## Every path is resolved before the first write, and never by string
+ *
+ * The existence pre-flight above uses `existsSync`, which **follows symlinks**.
+ * A dangling link is invisible to it — the target does not exist — and
+ * `writeFileSync` writes *through* it, so `loadScene.ts -> /outside/planted.ts`
+ * passed the refusal and then created a file outside the root (audit NEW-1).
+ *
+ * So containment is not left to `existsSync`. Every one of the six paths goes
+ * through `resolveInsideRoot`, which resolves the nearest existing ancestor
+ * through `realpathSync` — that is what sees the link the existence check
+ * cannot — and the generator refuses before writing anything if any of them
+ * leaves the root. D47 §1 says the refusal is meant to be total; this is where
+ * "total" stopped meaning "checked six names for existence".
  */
 export function generateProject(root: string, brief: Partial<GameBrief>): GeneratedProject {
   const problems = checkBrief(brief);
@@ -222,15 +237,45 @@ export function generateProject(root: string, brief: Partial<GameBrief>): Genera
   const written: string[] = [];
 
   /**
-   * The refusal, checked **before the first write**.
+   * Containment, checked **before the first write** and for all six paths.
    *
-   * Order matters as much as the check. Writing one file and then discovering a
-   * second one exists would leave the developer with a partly-written template —
-   * and the one file already replaced is the one they cannot get back.
+   * Two gates, and the order is the point:
+   *
+   *  1. `resolveInsideRoot` — a symlinked `loadScene.ts` or `prefabs/` that
+   *     leaves the root is refused here, while `existsSync` below would have said
+   *     it does not exist.
+   *  2. the existence pre-flight — the developer's own files are still never
+   *     overwritten, and still all six are named at once rather than discovered
+   *     one at a time mid-write.
+   *
+   * Both run before anything is written, so a refusal leaves the folder exactly
+   * as it was.
    */
-  const existing = files
-    .map(([relativePath]) => relativePath)
-    .filter((relativePath) => existsSync(join(root, relativePath)));
+  const resolved = files.map(([relativePath]) => ({
+    relativePath,
+    // allowMissingRoot: this generator CREATES the folder, so its root is absent by
+    // design. Every path under it is still checked.
+    verdict: resolveInsideRoot(root, relativePath, { allowMissingRoot: true }),
+  }));
+
+  const escaping = resolved.flatMap((entry) =>
+    entry.verdict.ok ? [] : [{ relativePath: entry.relativePath, verdict: entry.verdict }],
+  );
+  if (escaping.length > 0) {
+    const names = escaping.map((entry) => `  - ${entry.relativePath}: ${entry.verdict.reason}`);
+    throw new Error(
+      `Cannot generate a project in ${root} — ${escaping.length} of the ${files.length} ` +
+        'file(s) this generator writes point outside that folder:\n' +
+        names.join('\n') +
+        '\n\nA folder holding a symlink there is not an empty folder, and writing through it ' +
+        'would create files somewhere other than here. Nothing has been written. Pick a ' +
+        'folder with no symlinks in it, or remove the link and try again.',
+    );
+  }
+
+  const existing = resolved
+    .filter((entry) => entry.verdict.ok && existsSync(entry.verdict.value.absolutePath))
+    .map((entry) => entry.relativePath);
   if (existing.length > 0) {
     throw new Error(
       `Cannot generate a project in ${root} — it already contains ${existing.length} of the ` +
@@ -242,10 +287,14 @@ export function generateProject(root: string, brief: Partial<GameBrief>): Genera
     );
   }
 
-  for (const [relativePath, contents] of files) {
-    const absolute = join(root, relativePath);
-    mkdirSync(dirname(absolute), { recursive: true });
-    writeFileSync(absolute, contents, 'utf-8');
+  for (const { relativePath, verdict } of resolved) {
+    // Unreachable: the refusal above already returned for any `!verdict.ok`.
+    // Written as a narrowing rather than an assertion so the type is the proof.
+    if (!verdict.ok) continue;
+    const contents = files.find(([path]) => path === relativePath)?.[1];
+    if (contents === undefined) continue;
+    mkdirSync(dirname(verdict.value.absolutePath), { recursive: true });
+    writeFileSync(verdict.value.absolutePath, contents, 'utf-8');
     written.push(relativePath);
   }
 

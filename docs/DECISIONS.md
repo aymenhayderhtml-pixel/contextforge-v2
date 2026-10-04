@@ -1633,3 +1633,105 @@ Zod's tree types cannot express. The comment describes a design the code moved a
 from; the code is right and the comment is stale.
 
 ---
+
+---
+
+## D51. One containment helper, and a project root the renderer cannot name
+
+**Context.** Three audit findings, one shape. PATCH-2/SEC-3, SEC-1, SEC-2, SEC-4,
+SCENE-4 and NEW-1 are all the same mistake in different clothes: a project-relative
+path arrives from outside, and something checks it lexically when it needed to be
+checked against the filesystem. `realpathSync` appeared **nowhere** in the repo
+before this.
+
+**Three audit claims were wrong, and are corrected here rather than fixed.**
+
+1. **The `### EDIT:` symlink claim is FALSE on this branch.** `copyIntoScratch`
+   skips symlinks, so the scratch has no link, the block cannot resolve, and the
+   whole reply is refused. What actually escaped was `### FILE:` — *creating* a new
+   file through a link, because the scratch materialises the missing link as a real
+   directory. Fixing a hole that is not there would have been a change with no
+   evidence behind it.
+2. **`NEED:` with an absolute path does not escape.** The read was `join(root, p)`,
+   and `join` treats an absolute segment as relative. `join` *does* normalise `..`,
+   so traversal worked, and symlinks worked because nothing resolved at all. The
+   fix covers both; the absolute case was already inert.
+3. **The gizmo `transform:`/`patch:` bug (D50) THREW a `TypeError`, it did not
+   "silently do nothing".** The IPC wrapper caught it and the developer saw a
+   refusal. Recorded because D50's commit message says otherwise and a future
+   reader will believe whichever they read second.
+
+**Decision.**
+
+1. **One helper: `resolveInsideRoot(root, relPath)`** in
+   `core/src/fs/resolveInsideRoot.ts`. It resolves the **nearest existing
+   ancestor** through `realpathSync` and refuses anything landing outside
+   `realpathSync(root)` — symlinks, dangling symlinks, `..`, absolute paths. The
+   ancestor is what makes `### FILE:` possible: a file that does not exist yet has a
+   parent directory that does.
+2. **Every reader and writer routes through it:** patch edit blocks, patch file
+   blocks, `compileContext` files, `NEED:` paths, `targetFile`, history writes and
+   undo, `generateProject`, `validateModelSlot`. The app's `isInsideProject` now
+   delegates rather than reimplementing.
+3. **A refusal is a sentence naming the path and the reason**, never a raw errno.
+   `"sub/link/secret.txt" resolves outside the project (/outside/secret.txt).` — the
+   resolved path is included because it is what makes the bug obvious to whoever
+   created the symlink.
+4. **`SEC-4`: `openProject` accepts only a folder the folder dialog returned.** The
+   main process keeps a `Set` of `realpath`s from its own `showOpenDialog`. This is
+   the layer *above* containment: with it open, a renderer that got its own
+   JavaScript executed could open `/` as a project and then read and write the whole
+   filesystem through paths that were, by then, entirely inside "the project". The
+   D51 fixes are only as strong as the set of roots they apply to.
+   - Compared on **both** sides through `realpath`, or a developer who picked a
+     symlinked path would be refused for it.
+   - `allowUnpickedRoot: 'test-only'` is a constructor argument on `deps`, fixed
+     when `registerHandlers` builds the backend. No channel carries it, so the
+     renderer cannot reach it. Seventeen test call sites pass it, which is why it is
+     stated in the signature rather than hidden.
+5. **`generateProject` may target a root that does not exist yet**, via an explicit
+   `{ allowMissingRoot: true }`. Only it passes it. A root that does not exist
+   cannot be a symlink, and every path *under* it is still checked — the opt-in is
+   about the root, not about switching the check off. Without it the generator is
+   simply unable to do its job.
+
+**Three bugs found while building it, all in code the audit's agent had written.**
+
+- **The residual was measured in the wrong direction.** `relative(absolute,
+  current)` is anchor-to-target reversed, and for any file its parent is its anchor,
+  so the residual was `..` and `resolve` walked straight out. **Every legitimate
+  path was refused** — `"src/main.js"` resolved to the project's own parent.
+  Compensating with `dirname(current)` overshot in the other direction: for a
+  top-level file the anchor is the root, and the residual became `../..`, resolving
+  to `/`. The fix is `relative(current, absolute)`, and the walk starts at
+  `dirname(absolute)` so the anchor is always a strict ancestor.
+- **The final path component was never checked.** The anchor walk starts at the
+  target's *parent*, so it only ever sees symlinks among the directories above it.
+  When the target itself was a symlink — `src/link.txt` pointing at
+  `/outside/secret.txt` — the walk never looked at it, and `existsOnDisk` reported
+  true because following the link finds a real file. Caught by the test, not by
+  reading: the directory-symlink cases all passed while the file-symlink case
+  escaped.
+- **`resolveInsideRoot` stopped reporting existence.** It had replaced an
+  `existsSync` with its own success, so the context compiler's
+  `if (!inside.ok || !exists(file)) continue` became a check that a missing file
+  passes, and `readFileSync` threw `ENOENT` out of the compiler. `ok` and
+  `existsOnDisk` are now separate fields, because they answer different questions:
+  *may this path be written* and *is there a file there yet*.
+
+**What was NOT done, deliberately.**
+
+- **`SEC-5` (the context character budget is reported but not enforced) is not
+  fixed.** It is a one-line behaviour change with real consequences for what a
+  prompt costs, and it is not a containment defect. Left, and recorded in `AI.md`.
+- **The audit's `audit-*.test.ts` files were not copied.** They are repros written
+  to fail against unfixed code, they are named for the audit rather than the
+  behaviour, and several cover findings in later rounds. `resolveInsideRoot.test.ts`,
+  `attachmentEscape.test.ts` and `openProjectTrust.test.ts` replace them and are
+  written against the fixed behaviour.
+
+**Cost, stated plainly.** Seventeen test call sites had to change, because the
+alternative — a bypass flag nobody passes — is a bypass flag everyone passes.
+That is the right trade for a security boundary, and it is also why the flag's
+scope and reachability are documented at the point of definition.
+

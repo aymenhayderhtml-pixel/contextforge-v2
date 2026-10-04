@@ -18,9 +18,9 @@
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { dirname } from 'node:path';
+import { resolveInsideRoot } from '../fs/resolveInsideRoot.js';
 import { validateContentSyntax, type SyntaxCheckResult } from './syntaxCheck.js';
-import { normalizePatchPath } from './editBlocks.js';
 
 /** One parsed `### FILE:` block. */
 export interface FileBlock {
@@ -119,15 +119,26 @@ export function writeFileBlocks(
   }
 
   // Resolve and reject unsafe paths before touching the filesystem.
+  //
+  // This is the site the audit named as PATCH-2's write half, and it is the one
+  // that really did escape: `### FILE: src/link/owned.txt` created a file
+  // *outside* the project, because a lexical check cannot see that `src/link`
+  // is a symlink. `resolveInsideRoot` resolves the nearest existing ancestor, so
+  // a not-yet-created target still works while a symlinked directory does not.
   const resolved = blocks.map((block) => {
-    const path = normalizePatchPath(block.path);
-    if (path === null) {
+    const inside = resolveInsideRoot(projectRoot, block.path);
+    if (!inside.ok) {
       throw new Error(
         `Invalid file path in patch: "${block.path}". ` +
-          'Paths must stay inside the project directory.',
+          'Paths must stay inside the project directory. ' +
+          inside.reason,
       );
     }
-    return { path, content: block.content, absolutePath: join(projectRoot, path) };
+    return {
+      path: inside.value.relativePath,
+      content: block.content,
+      absolutePath: inside.value.absolutePath,
+    };
   });
 
   const runPreCheck = options.preCheckSyntax !== false && !options.applyAnyway;
@@ -173,11 +184,17 @@ export function writeFileBlocks(
 /**
  * Read a file's current content, for building an undo record.
  * Returns null when the file does not exist.
+ *
+ * A path that leaves the project reads as `null`, not as its contents. This is a
+ * *read* helper used to build a "before" snapshot for the Patch screen's diff,
+ * so returning outside bytes here would put a foreign file into a diff the
+ * developer is about to approve.
  */
 export function readFileOrNull(projectRoot: string, relativePath: string): string | null {
-  const absolutePath = join(projectRoot, relativePath);
+  const inside = resolveInsideRoot(projectRoot, relativePath);
+  if (!inside.ok) return null;
   try {
-    return readFileSync(absolutePath, 'utf-8');
+    return readFileSync(inside.value.absolutePath, 'utf-8');
   } catch {
     return null;
   }

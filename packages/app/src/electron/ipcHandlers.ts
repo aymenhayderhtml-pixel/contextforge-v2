@@ -40,6 +40,7 @@ import {
   mkdtempSync,
   readFileSync,
   readdirSync,
+  realpathSync,
   rmSync,
   statSync,
   watch,
@@ -718,6 +719,15 @@ export interface IpcMainLike {
   removeHandler(channel: string): void;
 }
 
+/** `realpathSync` that returns null instead of throwing. */
+function safeRealpath(absolute: string): string | null {
+  try {
+    return realpathSync(absolute);
+  } catch {
+    return null;
+  }
+}
+
 /** The options `pickFolder` asks the OS dialog for. Only the one it uses. */
 export interface OpenFolderOptions {
   properties: ['openDirectory'];
@@ -828,6 +838,19 @@ export class AppBackend {
    */
   private prefabLoader: PrefabLoader | null = null;
 
+  /**
+   * Roots the folder dialog returned, as `realpath` (SEC-4).
+   *
+   * The set of directories this app will open is decided by a user gesture, not by
+   * a string arriving over IPC. `openProject` accepts a path only if it is in
+   * here. See the check in `openProject` for why that matters to SEC-1 and SEC-2.
+   *
+   * Not cleared on `closeProject`: the developer chose that folder, and closing
+   * the project is not un-choosing it. A long session accumulates one entry per
+   * project the developer opened, which is a handful of strings.
+   */
+  private readonly pickedRoots = new Set<string>();
+
   /** @param send deliver a push event to the renderer. */
   constructor(
     private readonly send: <V extends EventName>(event: V, payload: EventPayloadFor<V>) => void,
@@ -841,7 +864,23 @@ export class AppBackend {
      * silent no-op. Named fields also mean the next optional capability is
      * additive instead of another parameter nobody remembers the order of.
      */
-    private readonly deps: { picker?: FolderPickerLike } = {},
+    private readonly deps: {
+      picker?: FolderPickerLike;
+      /**
+       * Lets `openProject` accept a folder the dialog did not return.
+       *
+       * **For tests only.** A test builds a backend and opens a fixture in a temp
+       * directory; there is no native dialog to drive, and mocking one per test
+       * would be a second, worse way of naming "this is not a user gesture". The
+       * literal `'test-only'` is compared by value so the check reads as closed by
+       * default, and nothing on the IPC surface can set it: `deps` is fixed when
+       * `registerHandlers` builds the backend at startup.
+       *
+       * A test that wants to exercise the real behaviour passes nothing and asserts
+       * the refusal — `auditSecurity.test.ts` does exactly that.
+       */
+      allowUnpickedRoot?: 'test-only';
+    } = {},
   ) {}
 
   // ── Handlers ─────────────────────────────────────────────────────────────
@@ -863,6 +902,43 @@ export class AppBackend {
     if (!existsSync(root)) return fail(`No such folder: ${root}`);
     if (!isDirectory(root)) {
       return fail(`Not a folder: ${root}. Point ContextForge at a project folder, not a file.`);
+    }
+
+    /**
+     * Only a folder the folder dialog returned (SEC-4).
+     *
+     * `openProject` used to accept any existing directory, so `openProject({root:
+     * '/'})` succeeded and any renderer compromise went from "the one project the
+     * user opened" to "the whole filesystem" — which is what makes the path
+     * escapes in SEC-1 and SEC-2 matter rather than being contained to a project.
+     *
+     * The fix is an allowlist of roots the **main** process obtained from its own
+     * `showOpenDialog`. The renderer can ask for a folder; it cannot invent one.
+     * That inverts the trust direction: the set of readable directories is decided
+     * by a user gesture, not by a string crossing a process boundary.
+     *
+     * **Test-only escape hatch.** `allowUnpickedRoot` is for a test that opens a
+     * fixture without a native dialog, and it is `false` everywhere else. It is
+     * compared against a name rather than a capability so a renderer cannot reach
+     * it: nothing on the IPC surface sets it, and `registerHandlers` builds the
+     * backend once at startup with no argument that could set it.
+     *
+     * Note the check is on `realpath`, so a symlink the developer picked resolves
+     * to the same entry as the path they chose, and a symlink they did not pick
+     * cannot be substituted for one they did.
+     */
+    // Compared through `realpath`, on both sides. The set stores the resolved form
+    // (a developer may pick a symlinked path), so comparing the raw string would
+    // refuse a folder they chose — the one false positive this check cannot have.
+    const resolvedRoot = safeRealpath(root);
+    const chosen =
+      resolvedRoot !== null &&
+      (this.pickedRoots.has(resolvedRoot) || this.pickedRoots.has(root));
+    if (!chosen && this.deps.allowUnpickedRoot !== 'test-only') {
+      return fail(
+        `${root} was not chosen in the folder dialog. Choose the project folder with ` +
+          '"Open folder…" so ContextForge knows it is one you meant to open.',
+      );
     }
 
     // Opening a second project must not leave the first one's watchers running.
@@ -941,7 +1017,18 @@ export class AppBackend {
     // even after the length check, so it is narrowed by the line above rather
     // than asserted — and `openProject` re-checks it against the disk anyway,
     // because the main process does not trust a path without looking at it.
-    return ok(result.filePaths[0] as string);
+    const chosen = result.filePaths[0] as string;
+    // Remember it, so `openProject` can tell a folder the user chose from one a
+    // renderer named. `realpath` on both sides of the comparison: the user picks a
+    // symlinked path and must not be refused for it.
+    try {
+      this.pickedRoots.add(realpathSync(resolve(chosen)));
+    } catch {
+      // A folder that vanished between the dialog and here. `openProject` will
+      // say "No such folder" with the path in it, which is the better message
+      // than anything invented here.
+    }
+    return ok(chosen);
   }
 
   closeProject(): Result<null> {

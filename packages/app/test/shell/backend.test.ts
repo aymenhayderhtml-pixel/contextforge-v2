@@ -72,7 +72,7 @@ function backend(): { app: AppBackend; sent: Sent[] } {
   const sent: Sent[] = [];
   const app = new AppBackend((event, payload) => {
     sent.push({ event, payload: payload as unknown });
-  });
+  }, { allowUnpickedRoot: 'test-only' });
   return { app, sent };
 }
 

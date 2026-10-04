@@ -8,7 +8,15 @@
  */
 
 import { describe, expect, it, beforeEach, afterEach } from 'vitest';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { findTargetMatch } from '../../src/patch/finder.js';
@@ -262,12 +270,35 @@ describe('applyEditBlocks', () => {
 
   it('refuses a path that escapes the project root', () => {
     writeFile('a.js', 'const a = 1;\n');
+    // The wording is `resolveInsideRoot`'s (D51), not a bare errno: it names the
+    // path and says why. The old expectation matched /directory traversal/ from a
+    // message that no longer exists, so this test was asserting a string rather
+    // than a behaviour.
     expect(() =>
       applyEditBlocks(
         testDir,
         ['### EDIT: ../escape.js', '<<<<<<< FIND', 'a', '=======', 'b', '>>>>>>> REPLACE'].join('\n'),
       ),
-    ).toThrow(/directory traversal|inside the project/i);
+    ).toThrow(/"\.\.\/escape\.js".*climbs out of the project/i);
+  });
+
+  it('refuses a path that a symlink redirects outside the root', () => {
+    // The lexical check cannot see this one: `link/owned.js` contains no `..` and
+    // is not absolute. It is SEC-3, and `realpath` is the only thing that sees it.
+    const outside = mkdtempSync(join(tmpdir(), 'cf-outside-'));
+    symlinkSync(outside, join(testDir, 'link'));
+    try {
+      // `writeFileBlocks`, not `applyEditBlocks` — a `### FILE:` block is parsed
+      // and written by the other half of the patch engine.
+      expect(() =>
+        writeFileBlocks(
+          testDir,
+          ['### FILE: link/owned.js', '```js', 'export const x = 1;', '```'].join('\n'),
+        ),
+      ).toThrow(/link\/owned\.js.*resolves outside the project/i);
+    } finally {
+      rmSync(outside, { recursive: true, force: true });
+    }
   });
 
   it('throws when the text has no EDIT blocks', () => {

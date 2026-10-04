@@ -50,7 +50,7 @@ afterEach(() => {
 
 function backend(): { app: AppBackend; sent: unknown[] } {
   const sent: unknown[] = [];
-  return { app: new AppBackend((event, payload) => sent.push({ event, payload })), sent };
+  return { app: new AppBackend((event, payload) => sent.push({ event, payload }), { allowUnpickedRoot: 'test-only' }), sent };
 }
 
 /** A three-file project with a real import chain. */

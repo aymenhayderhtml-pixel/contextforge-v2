@@ -100,7 +100,7 @@ type Handler = (event: unknown, ...args: never[]) => unknown;
  */
 const REGISTRAR_READY: boolean = ((): boolean => {
   try {
-    registerHandlers({ handle: () => {}, removeHandler: () => {} }, new AppBackend(() => {}));
+    registerHandlers({ handle: () => {}, removeHandler: () => {} }, new AppBackend(() => {}, { allowUnpickedRoot: 'test-only' }));
     return true;
   } catch {
     return false;
@@ -130,7 +130,7 @@ async function bound(files: Record<string, string>): Promise<Bound> {
   // fresh per test — but clearing removes any doubt about ordering.
   clearHistory(root);
 
-  const app = new AppBackend(() => {});
+  const app = new AppBackend(() => {}, { allowUnpickedRoot: 'test-only' });
   const opened = await app.openProject({ root });
   if (!opened.ok) throw new Error(`could not open the temp project: ${opened.reason}`);
 
@@ -611,7 +611,7 @@ describe('all-or-nothing (D5)', () => {
   });
 
   it('refuses everything, including a preview, when no project is open', async () => {
-    const app = new AppBackend(() => {});
+    const app = new AppBackend(() => {}, { allowUnpickedRoot: 'test-only' });
 
     const preview = await app.previewPatch({ text: '### FILE: a.js\n```\n1;\n```\n' });
     const applied = await app.applyPatch({ text: '### FILE: a.js\n```\n1;\n```\n' });
@@ -672,7 +672,7 @@ describe.skipIf(!REGISTRAR_READY)('registration of the three patch channels', ()
         },
         removeHandler: () => {},
       },
-      new AppBackend(() => {}),
+      new AppBackend(() => {}, { allowUnpickedRoot: 'test-only' }),
     );
 
     // Not asserted by name alone: a handler bound to the wrong channel is a UI

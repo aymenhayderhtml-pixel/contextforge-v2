@@ -363,7 +363,7 @@ npm run typecheck   # tsc --build
 5. **`lint:prefabs`** — prefab purity rules.
 6. **`test`** — Vitest across `packages/*/test/`.
 
-Current result: **70 files, 1430 tests, exit 0.**
+Current result: **73 files, 1469 tests, exit 0.**
 
 ### If you are an AI agent
 

@@ -25,7 +25,8 @@
  */
 
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, resolve } from 'node:path';
+import { resolveInsideRoot } from '../fs/resolveInsideRoot.js';
 
 /** How many steps the undo stack holds. */
 export const MAX_HISTORY_STEPS = 20;
@@ -194,14 +195,20 @@ export function captureAndWrite(
   const changes: FileChange[] = [];
 
   for (const [path, after] of updates) {
-    const absolutePath = join(projectRoot, path);
-    const before = existsSync(absolutePath)
-      ? readFileSync(absolutePath, 'utf-8')
+    // Containment, before the read. An update key that leaves the project is not
+    // a change to record — it is a request to write a file the project does not
+    // own, and recording it would put it on the undo stack where pressing Undo
+    // would perform it (audit NEW-4).
+    const inside = resolveInsideRoot(projectRoot, path);
+    if (!inside.ok) continue;
+
+    const before = existsSync(inside.value.absolutePath)
+      ? readFileSync(inside.value.absolutePath, 'utf-8')
       : null;
 
     if (before === after) continue;
 
-    changes.push({ path, before, after });
+    changes.push({ path: inside.value.relativePath, before, after });
   }
 
   for (const change of changes) {
@@ -211,13 +218,31 @@ export function captureAndWrite(
   return changes;
 }
 
-/** Write a file, creating parent directories. `null` content deletes the file. */
+/**
+ * Write a file, creating parent directories. `null` content deletes the file.
+ *
+ * **The single choke point for every history write.** `captureAndWrite`, `undo`
+ * and `redo` all come through here, so the containment decision below is the
+ * only one there is: a recorded path that resolves outside the project is
+ * skipped rather than written, whether it arrived from a patch plan or from a
+ * step recorded minutes ago.
+ *
+ * A refusal is silent here on purpose. This function's callers either return the
+ * step's paths to a developer who is looking at a Problems panel, or are inside
+ * an undo of a transaction that is already described; the sentence that matters
+ * is produced where the path first arrives, and `resolveInsideRoot` is what
+ * refuses it there. What is *not* allowed is a second implementation of
+ * containment — that is what audit NEW-4 was.
+ */
 function writeProjectFile(
   projectRoot: string,
   relativePath: string,
   content: string | null,
 ): void {
-  const absolutePath = join(projectRoot, relativePath);
+  const inside = resolveInsideRoot(projectRoot, relativePath);
+  if (!inside.ok) return;
+
+  const absolutePath = inside.value.absolutePath;
 
   if (content === null) {
     if (existsSync(absolutePath)) rmSync(absolutePath, { force: true });
