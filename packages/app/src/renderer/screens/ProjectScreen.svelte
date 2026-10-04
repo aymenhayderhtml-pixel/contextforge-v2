@@ -673,7 +673,8 @@
               </p>
             {/if}
 
-            <ul class="file-verdict-list" aria-label="Files to be created">
+            {#if previewResult.files.length > 0}
+              <ul class="file-verdict-list" aria-label="Files to be created">
               {#each previewResult.files as file (file.path)}
                 <li class="file-verdict-item">
                   <span class="tag-new">NEW</span>
@@ -688,6 +689,7 @@
                 </li>
               {/each}
             </ul>
+            {/if}
 
             <p class="will-create">Will create: <code>{previewResult.targetFolder}</code></p>
 
@@ -1222,6 +1224,8 @@
     font-family: ui-monospace, 'SF Mono', Menlo, monospace;
     font-size: 12px;
     line-height: 1.4;
+    height: 120px;
+    max-height: 140px;
   }
 
   .brief-problems {
@@ -1265,7 +1269,7 @@
     list-style: none;
     margin: 6px 0 0;
     padding: 0;
-    max-height: 150px;
+    max-height: 100px;
     overflow-y: auto;
     border: 1px solid var(--line);
     border-radius: 5px;

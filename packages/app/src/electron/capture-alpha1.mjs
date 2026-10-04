@@ -97,6 +97,10 @@ async function main() {
   await win.loadFile(RENDERER_ENTRY);
   await new Promise((r) => setTimeout(r, 1500));
 
+  const parentProjectsDir = join(homedir(), 'Documents', 'ContextForge Projects');
+  const existingFolder = join(parentProjectsDir, 'alpha-runner');
+  rmSync(existingFolder, { recursive: true, force: true });
+
   // ── 11. Project screen with the single help line ──────────────────────────
   await capture(win, '11-project-screen-helpline.png');
 
@@ -223,8 +227,6 @@ console.log("http://127.0.0.1:5173");
   await capture(win, '05-step4-bad-block.png');
 
   // ── 06. Step 4 with an existing folder ─────────────────────────────────────
-  const parentProjectsDir = join(homedir(), 'Documents', 'ContextForge Projects');
-  const existingFolder = join(parentProjectsDir, 'alpha-runner');
   mkdirSync(existingFolder, { recursive: true });
   writeFileSync(join(existingFolder, 'existing.txt'), 'already here');
 
@@ -291,6 +293,10 @@ console.log("http://127.0.0.1:5173");
   send('project:dev-ready', { url: 'http://127.0.0.1:5173' });
   await new Promise((r) => setTimeout(r, 400));
   await capture(win, '10-run-game-running.png');
+
+  try {
+    rmSync(existingFolder, { recursive: true, force: true, maxRetries: 5 });
+  } catch {}
 
   writeFileSync(
     REPORT_PATH,
