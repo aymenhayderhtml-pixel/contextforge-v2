@@ -15,6 +15,7 @@
   import PatchScreen from './screens/PatchScreen.svelte';
   import ProjectScreen from './screens/ProjectScreen.svelte';
   import SceneScreen from './screens/SceneScreen.svelte';
+  import SearchBox from './search/SearchBox.svelte';
 
   /** The one store. Passed in rather than imported so tests can supply a fake. */
   let { store }: { store: EditorStore } = $props();
@@ -94,6 +95,8 @@
     dirty={store.busy}
   />
 
+  <SearchBox {store} />
+
   <main class="screen">
     {#if active === 'project'}
       <ProjectScreen {store} onOpenScene={() => (active = 'scene')} />
@@ -170,12 +173,39 @@
 <style>
   .app {
     display: grid;
+    /*
+     * Three regions, and the search box spans the two right-hand columns on its
+     * own row: it is a query over whatever project is open, so it applies to
+     * every screen rather than belonging to one. The sidebar stays full height on
+     * the left. A two-column grid would drop the box into an implicit third
+     * column and squeeze both the screen and the sidebar.
+     */
     grid-template-columns: 220px 1fr;
+    grid-template-rows: auto 1fr;
     height: 100%;
     position: relative;
   }
 
+  /*
+   * The sidebar's class belongs to `Sidebar.svelte`, so a scoped `.sidebar` rule
+   * here would be compiled with this file's scope hash and match nothing. `:global`
+   * is what actually reaches it — without it the sidebar silently falls into the
+   * first row and the layout looks plausible until the screen is tall.
+   */
+  .app > :global(.sidebar) {
+    grid-column: 1;
+    grid-row: 1 / -1;
+  }
+
+  /* The search box is the only child that spans both content columns. */
+  .app > :global(.search) {
+    grid-column: 2 / -1;
+    grid-row: 1;
+  }
+
   .screen {
+    grid-column: 2;
+    grid-row: 2;
     min-width: 0;
     min-height: 0;
     overflow: auto;
