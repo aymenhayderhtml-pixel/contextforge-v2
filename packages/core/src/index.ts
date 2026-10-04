@@ -64,6 +64,11 @@ export type {
   OrphanReason,
 } from './graph/analysis.js';
 
+// Which labels the graph screen may draw, and what text. A pure rule so a test
+// can assert it without a canvas; see labels.ts for why it lives here.
+export { basename, decideGraphLabels, visibleLabels } from './graph/labels.js';
+export type { GraphLabel, LabelInputs, LabelReason } from './graph/labels.js';
+
 // ── Parsers ──────────────────────────────────────────────────────────────────
 export {
   grammarForPath,

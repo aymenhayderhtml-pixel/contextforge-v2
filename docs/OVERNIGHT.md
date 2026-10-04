@@ -391,7 +391,9 @@ harness printed `FAILED` and still exited **0**. CI would have read it green.
 Five in `screenshots/v05/`, all captured by `capture-graph.mjs`, which **throws
 rather than photograph a state it cannot confirm** (the D43 lesson):
 
-- `graph-01-full.png` — the full graph: 37 files, 46 edges, 4 unreferenced.
+- `graph-01-full.png` — the full graph: **29 files, 38 edges, 4 unreferenced**, with
+  labels staggered across two rows so they do not overlap. (37/46 was the count before
+  D48 stopped drawing eight nodes for files that do not exist; see D48 and D49.)
 - `graph-02-focus-depth1.png` — focus on `browserSceneLoader.js`, 5 nodes, with
   the depth selector and **Show all files**.
 - `graph-03-focus-depth2.png` — the same node at depth 2: 25 nodes.

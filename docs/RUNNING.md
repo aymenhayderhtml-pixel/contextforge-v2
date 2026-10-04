@@ -228,7 +228,10 @@ floor and four coloured karts, INSPECTOR (right).
 **4. Browse the graph.** Click **Graph** in the sidebar.
 
 > **Working looks like:** `29 files · 38 edges · 4 unreferenced`, and a node per
-> file. Click a node to see only its neighbourhood — the toolbar then offers a
+> file. Labels sit on two alternating rows so they do not overlap; **hover any node
+> to read its full name**, which is how you see the handful too long to draw
+> (`scene-manager.js`, `prefabs.js`). A node with no label is not missing — hover it.
+> Click a node to see only its neighbourhood — the toolbar then offers a
 > **Depth** selector (1 or 2) and a **Show all files** button. Open
 > **Unreferenced (4)** for the drawer: each row says *why* it is flagged
 > (`entry point` vs `unreferenced`), because an entry point is unreferenced by

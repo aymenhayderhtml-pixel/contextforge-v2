@@ -197,6 +197,8 @@ async function main() {
   `);
   console.log(`[capture] full graph: ${full.counts}`);
 
+
+
   const nodeCount = Number(/(\d+) files/.exec(full.counts)?.[1] ?? '0');
   if (nodeCount < 5) {
     throw new Error(

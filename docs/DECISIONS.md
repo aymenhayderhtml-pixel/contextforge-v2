@@ -1382,3 +1382,88 @@ the eight phantom assets. That is the classifier being honest — the file
 genuinely imports nothing — and it is why the drawer's per-row reason matters.
 
 ---
+
+---
+
+## D49. Graph labels: stagger on row geometry, hide what still collides, always label the singled-out node
+
+**Context.**
+1. The full graph's labels were unreadable. `src/main.js` fans out to 17 siblings;
+   `breadthfirst` lays them on one line about 48px apart; 17 labels of a full path at
+   font-size 9 do not fit there. The screenshot read `src/browserscenebundler.js` and
+   `src/resources.js` as one smear. The graph was correct; the screen was not usable.
+2. There was no rule anywhere — the label was `node.id` unconditionally, set in the
+   Cytoscape style block. Nothing about it was testable.
+
+**Decision.**
+1. **The rule is a pure function in core, `core/src/graph/labels.ts`.** Not in the
+   component: a rule that lives only inside a Svelte file is a rule nothing can
+   assert, and there is no jsdom here so a test cannot mount a component. Same
+   reasoning as D44.
+2. **Priority order per node:** singled-out (focused, selected or hovered) is always
+   drawn at its **full path** in lane 0; otherwise the basename is drawn at lane 0 if
+   it fits, at lane 1 (staggered) if half of it fits, and not drawn otherwise.
+3. **Stagger before hiding, in that order.** Hiding everything on the full graph would
+   leave a default view that is a field of unlabelled dots — correct, and useless for
+   the question the screen was opened to answer.
+4. **The singled-out case is unconditional**, and it is the load-bearing half.
+   Decluttering by hiding every label is a common, defensible move, and it is wrong
+   here: clicking a node is how a developer asks what it is called, so a screen that
+   shows nothing on click has failed at the one job the click was for.
+5. **Overlapping is worse than absent**, because an absent label is recoverable by
+   hover and an overlapping one is not. Every threshold therefore carries a **1.25x
+   safety margin**: a label flush against its neighbour is not readable either.
+6. **Widths are measured per node from the DOM**, not estimated from a character
+   count and not taken from the widest name in the project. The widest-name version
+   was tried and drew a graph with **no labels on it at all**: `playerSceneLoader.js`
+   is 108px, the row gives 96px across two staggered slots, `108 x 1.25 > 96`, so
+   every label was judged too wide. Two names 60px apart were being measured with one
+   yardstick, and the yardstick was the longest one.
+7. **`pixelsPerSlot` is measured from the laid-out positions**, not computed as
+   `canvasWidth / nodeCount`. The division guessed 54px for a row whose nodes are
+   48px apart — a 12% over-estimate, so every label believed it had 6px more room
+   than it did. The capture harness is what found this; no unit test could have,
+   because the wrong number was the number the test was given.
+8. **Lanes come from each node's index within its row**, read off the laid-out `y`
+   and `x`. They do **not** come from the order labels are drawn in: that order
+   changes as soon as `dropCollisions` hides one, so a counter desynchronised from
+   the geometry and a row meant to alternate `0,1,0,1` came out with 14 of its 18
+   labels in lane 0, each 48px from its neighbour instead of 96px. Every surviving
+   label was still stacked. All tests passed, because the tests have one row and
+   nothing dropped.
+9. **A second pass drops labels that still collide with their same-lane predecessor.**
+   Per-node widths are necessary but not sufficient: two labels that each pass a
+   96px test can still collide in the 96px they share. The test is **pairwise**, not a
+   running sum — each label has its own gap ahead of it, and a running sum dropped 14
+   of 18 labels on the real graph.
+10. **The renderer mirrors the rule** in `renderer/graph/labels.ts`, because
+    `@contextforge/core` is `external` in the Vite renderer build and core imports
+    `node:fs` and tree-sitter. The precedent is `renderer/viewport/rng.ts`. The
+    duplication is made safe by a test that imports **both** copies and compares them
+    over ~3,300 input combinations, including both accepted shapes for the width and
+    row-index maps. It found a real divergence: the mirror forced lane 0 when no row
+    geometry was supplied, unstaggering every caller that omitted it.
+11. **A hand-written `svelte-check` substitute was tried and deleted.** It was meant
+    to catch undefined identifiers in `.svelte` files, which `tsc` does not read. It
+    reported ~200 false positives, and after those were fixed it *still* failed to
+    notice the very bug it was written for — `applyLabelDecision` reaching for `nodes`,
+    a parameter of `sync` that is not in scope in it. A linter that looks like a
+    safety net and catches nothing is worse than none. What catches it instead is the
+    existing console-error assertion in the capture harness, which now prints each
+    error and its source. `svelte-check` is the real fix and is a separate decision.
+
+**Effect on the real project:** 26 of 29 nodes carry a label. The three without —
+`scene-manager.js` (86px), `prefabs.js` (70px) and `characters.js` (70px) — are
+exactly the ones that cannot fit 96px with margin beside a same-lane neighbour, and
+hover shows each at full path. `main.js` fits its slot outright and is drawn at lane 0.
+
+**Known limits, stated rather than hidden.**
+- The rule assumes labels within a row are laid out left to right, which `breadthfirst`
+  guarantees. A layout that placed a row out of order would get lanes from `x` and still
+  be correct, because the row index is measured from the positions, not assumed.
+- Lane 0 and lane 1 are two fixed vertical offsets. A third lane would help a graph
+  with much longer names; nothing here needs it, and it is not pre-built.
+- A label is measured at the current font size only. Zooming the canvas does not
+  re-measure, so at a large zoom the margins are proportionally looser.
+
+---

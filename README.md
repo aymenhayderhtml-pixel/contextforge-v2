@@ -51,7 +51,7 @@ matters — says *why* each one is flagged. An entry point (`index.html`,
 `main.ts`) is unreferenced by construction and is **not** dead code; a file with
 no references at all might be.
 
-![Graph screen: the whole project, 29 files and 38 edges](docs/images/graph-dependency-graph.png)
+![Graph screen: the whole project, 29 files and 38 edges, labels staggered so they do not overlap](docs/images/graph-dependency-graph.png)
 
 ![Graph screen: one file's neighbourhood, with the depth selector and a way back](docs/images/graph-focus-depth1.png)
 
