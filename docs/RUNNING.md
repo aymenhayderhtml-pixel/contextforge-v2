@@ -132,6 +132,77 @@ No preload bridge, so no file access — useful for CSS work only.
 
 ---
 
+## Package it (AppImage)
+
+Everything above runs the app from the repo. This section builds a single file
+you can copy to another machine and double-click.
+
+```bash
+npm run dist:appimage      # → dist/ContextForge-<version>-x86_64.AppImage
+```
+
+That one command runs all three steps in order, because each depends on the one
+before it:
+
+```bash
+npm run typecheck                          # tsc: main process → packages/app/dist/
+npm run build:ui -w @contextforge/app      # vite: renderer → packages/app/dist/renderer/
+npx electron-builder --linux AppImage      # packages the two into one AppImage
+```
+
+**This machine has no FUSE**, so the AppImage cannot mount itself and running it
+prints `dlopen(): error loading libfuse.so.2`. Two ways round that:
+
+```bash
+sudo apt install libfuse2               # the normal fix
+./dist/ContextForge-0.1.0-x86_64.AppImage --appimage-extract   # no install needed
+cd squashfs-root && ./AppRun --no-sandbox
+```
+
+Either way the launcher below still works; FUSE affects only *running* the file
+directly, not installing it.
+
+### Install the launcher
+
+```bash
+scripts/install-launcher.sh               # install for the current user
+scripts/install-launcher.sh --uninstall   # remove it again
+```
+
+This writes, all under `$HOME` and with no root:
+
+| | |
+| --- | --- |
+| `~/.local/share/applications/contextforge.desktop` | the launcher entry |
+| `~/.local/bin/contextforge` | the command it runs |
+| `~/.local/share/icons/hicolor/{64,256,512}x…/apps/contextforge.png` | the icons |
+
+After that, **ContextForge** is in your application menu and `contextforge`
+runs it from a terminal (assuming `~/.local/bin` is on your `PATH`).
+
+The script points the launcher at the **newest** `*.AppImage` it finds in `dist/`,
+so a rebuild followed by a re-run picks up the new build. It refuses, with a
+message naming where it looked, when there is no build yet — it will not install
+a launcher for an app that does not exist.
+
+It validates the entry it just wrote with `desktop-file-validate` and fails if
+that does not pass, so a malformed `.desktop` cannot end up half-installed.
+
+### Icons are generated
+
+`build/icon.svg` is the source; the PNGs beside it are generated:
+
+```bash
+npm run icons                             # build/icon-{64,256,512}.png + the xNxN forms
+```
+
+Rendering uses `@resvg/resvg-js` (MPL-2.0, already a devDependency) because this
+machine has **neither ImageMagick `convert` nor `rsvg-convert`**. `rsvg-convert`,
+`convert` and `inkscape` are used instead when they are present. The PNGs are
+committed so a clean checkout can be packaged with nothing but `npm ci`.
+
+---
+
 ## Test
 
 ```bash
@@ -338,6 +409,38 @@ reports no windows even though the app is running fine. Check
 Usually software rendering. Chromium falls back to llvmpipe with no GPU, which
 does render, but slowly. Check `chrome://gpu` if you need the detail.
 
+### The AppImage builds but the app exits at once
+
+A packaging mistake, not a code one, and it has a recognisable shape: the app
+starts and dies in the main process with `ERR_MODULE_NOT_FOUND`. That means the
+asar is missing a file that the built code imports. Two that this packaging setup
+needs and that a default `files` list leaves out:
+
+| Missing | Imported as | Symptom |
+| --- | --- | --- |
+| `dist/ipc.js` | `../ipc.js` from `dist/electron/ipcHandlers.js` | `Cannot find module '.../app.asar/dist/ipc.js'` |
+| `node_modules/node-gyp-build` | `require('node-gyp-build')` in each tree-sitter package's `index.js` | `Cannot find module 'node-gyp-build'` |
+
+`tsc` emits `src/ipc.ts` to `dist/ipc.js`, *beside* `dist/electron/` rather than
+inside it, so a rule that lists only `dist/electron/**` silently drops it. Check
+the archive directly:
+
+```bash
+npx asar list dist/linux-unpacked/resources/app.asar | grep -E 'dist/ipc.js|node-gyp-build'
+```
+
+### The launcher installs but nothing happens when clicked
+
+Check the `Exec=` line. If it names an AppImage under a path containing a space
+and is not quoted, it will fail — and `desktop-file-validate` will **not** warn
+you, because it does not check that. `scripts/install-launcher.sh` avoids the
+problem entirely by pointing `Exec` at `contextforge`, a single word.
+
+### `install-launcher.sh` says "no built AppImage found"
+
+Nothing to point at yet. Run `npm run dist:appimage` first. The message lists
+every directory it searched.
+
 ### A gate fails and you did not change anything
 
 `check:three` compares against the game's `package.json`. If you moved or
@@ -351,6 +454,9 @@ renamed the game project, set `CF_GAME_ROOT`.
 | --- | --- |
 | `packages/core` | the engine. No DOM, no Electron, no UI. |
 | `packages/app` | the Electron + Svelte shell over it. |
+| `build/` | packaging assets: `icon.svg` (source) and its generated PNGs, `contextforge.desktop`. |
+| `dist/` | build output. Holds `linux-unpacked/` and the `.AppImage` after packaging. Ignored by git. |
+| `scripts/install-launcher.sh` | installs / removes the per-user launcher entry. |
 | `docs/DECISIONS.md` | every design decision, with its reasoning. D1–D47, with no D17–D19 (those numbers were never written; `package.json` still references "D17") |
 | `docs/OVERNIGHT.md` | the Step 5 build log, with what is proven and what is not |
 | `screenshots/` | proof screenshots, by iteration |
