@@ -37,6 +37,10 @@
  *    caches ESM modules by URL forever, so a rebuild of an unchanged path would
  *    otherwise keep serving the *first* version. A per-import query suffix is
  *    what makes "reload" mean reload.
+ *  - **esbuild's binary is re-pointed before any build.** esbuild `spawn`s a real
+ *    executable, which cannot happen at a path inside an asar. In the packaged app
+ *    that is `spawn ENOTDIR` for *every* prefab at once. See
+ *    `ensureEsbuildBinaryIsExecutable`.
  *
  * ## A bad prefab is a row, not a crash
  *
@@ -75,7 +79,7 @@ import {
 } from 'node:fs';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
-import { basename, dirname, isAbsolute, join, resolve as resolvePath } from 'node:path';
+import { basename, dirname, isAbsolute, join, resolve as resolvePath, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import type { z } from 'zod';
 
@@ -468,6 +472,102 @@ function collect(
 export const EXTERNAL_SPECIFIERS = ['three', '@contextforge/core'] as const;
 
 /**
+ * Point esbuild at a binary that can actually be executed, once per process.
+ *
+ * ## The defect this exists to prevent
+ *
+ * esbuild is not a pure library. `esbuild/lib/main.js` locates its platform package
+ * and then `child_process.spawn`s that binary as a real executable file. Inside an
+ * Electron asar that fails with **`spawn ENOTDIR`**, and it fails *identically for
+ * every prefab*, because each prefab goes through the same `build()` call:
+ *
+ *   ```
+ *   spawn ENOTDIR — at ChildProcess.spawn (node:internal/child_process:458:11)
+ *   ```
+ *
+ * The reason is the seam between two different pieces of Electron's asar support.
+ * Electron patches `fs` so `readFileSync('.../app.asar/x')` succeeds and transparently
+ * redirects a *read* of an unpacked file to `app.asar.unpacked`. It does **not** patch
+ * `child_process`, so `require.resolve('@esbuild/linux-x64/bin/esbuild')` — which
+ * legitimately returns a path *inside* `app.asar` — hands `spawn` a path that is not a
+ * file on disk. `spawn` says ENOTDIR and every prefab becomes a row in the Problems
+ * panel.
+ *
+ * Nothing in the dev tree shows this: there the resolved path is a real file.
+ *
+ * ## The fix
+ *
+ * Rewrite the `.asar` segment of the resolved path to `.asar.unpacked`, which is where
+ * the real file lives, and hand it to esbuild through `ESBUILD_BINARY_PATH`. The binary
+ * is already unpacked in the shipped package — `@esbuild/linux-x64` declares
+ * `"preferUnplugged": true`, which electron-builder honours — so this only corrects the
+ * *path*; it never copies or extracts anything.
+ *
+ * Why the environment variable rather than patching esbuild's internals: it is the
+ * documented, stable override, it is read by `generateBinPath()` before esbuild's own
+ * resolution runs, and it leaves a deliberate mark (`esbuildForcedBinaryPath`) that a
+ * test can assert. Setting `process.env` is done *before* esbuild's first `build()`, and
+ * esbuild re-reads the env var on every call, so this is a one-shot process-level
+ * side effect rather than a per-call hack.
+ *
+ * Every failure path **falls back to doing nothing**, leaving esbuild's own resolution in
+ * charge: if the path cannot be resolved, or the unpacked twin does not exist, or the
+ * rewrite finds no `.asar` in the path, the correct behaviour is the current behaviour.
+ * A dev-tree process must be completely unaffected by this function.
+ */
+let esbuildForcedBinaryPath: string | null = null;
+
+/**
+ * The unpacked twin of a path inside an asar, or `null` when there is nothing to rewrite.
+ *
+ * `resources/app.asar/node_modules/x` → `resources/app.asar.unpacked/node_modules/x`.
+ */
+export function unpackedAsarPath(path: string): string | null {
+  const marker = `${sep}app.asar${sep}`;
+  const at = path.lastIndexOf(marker);
+  if (at === -1) return null;
+  return `${path.slice(0, at)}${sep}app.asar.unpacked${sep}${path.slice(at + marker.length)}`;
+}
+
+/**
+ * Best-effort: make esbuild's binary executable from this process, if it is not already.
+ *
+ * Returns the path handed to esbuild, or `null` when nothing needed doing (the dev tree,
+ * or an already-valid setup). Never throws — see the fallback note above.
+ */
+export function ensureEsbuildBinaryIsExecutable(): string | null {
+  if (esbuildForcedBinaryPath !== null) return esbuildForcedBinaryPath;
+
+  const already = process.env.ESBUILD_BINARY_PATH;
+  // Respect an explicit override the operator set. Rewriting it would be surprising:
+  // if someone pinned a path, that is the path they asked for.
+  if (typeof already === 'string' && already !== '' && existsSync(already)) {
+    esbuildForcedBinaryPath = null;
+    return null;
+  }
+
+  try {
+    const here = fileURLToPath(import.meta.url);
+    const specifier = `@esbuild/${process.platform}-${process.arch}/bin/esbuild`;
+    const inAsar = createRequire(join(here, 'noop.js')).resolve(specifier);
+    const rewritten = unpackedAsarPath(inAsar);
+    if (rewritten === null || !existsSync(rewritten)) return null;
+
+    process.env.ESBUILD_BINARY_PATH = rewritten;
+    esbuildForcedBinaryPath = rewritten;
+    return rewritten;
+  } catch {
+    // esbuild's own resolution is correct in every case we cannot improve on.
+    return null;
+  }
+}
+
+/** The binary path this process forced, or `null`. Read by the packaging test. */
+export function forcedEsbuildBinaryPath(): string | null {
+  return esbuildForcedBinaryPath;
+}
+
+/**
  * How each external specifier must be loaded.
  *
  * `esm` matters. Three.js and Zod both publish two builds behind an `exports`
@@ -795,6 +895,9 @@ export async function bundleEntry(entryPoint: string, projectRoot: string): Prom
   };
 
   try {
+    // Before `build()`: inside an asar this rewrites esbuild's binary path to the
+    // unpacked real file. See `ensureEsbuildBinaryIsExecutable` for why `spawn` needs it.
+    ensureEsbuildBinaryIsExecutable();
     const result = await build({
       entryPoints: [entryPoint],
       bundle: true,
@@ -959,6 +1062,7 @@ export async function bundlePrefabsForBrowser(
   };
 
   try {
+    ensureEsbuildBinaryIsExecutable();
     const result = await build({
       entryPoints: [entryPoint],
       bundle: true,
