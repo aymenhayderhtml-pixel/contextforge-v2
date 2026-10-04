@@ -37,7 +37,7 @@ network calls of its own.
 ## What it does
 
 Every claim below is backed by a test in `packages/*/test/`. `npm run verify`
-runs all of them: **68 test files, 1407 tests, green.**
+runs all of them: **83 test files, 1608 tests, green.**
 
 ### Sees the whole project at once
 
@@ -215,6 +215,43 @@ appears in the prompt instead of quietly drifting from it.
 *Not yet:* this flow stops at the prompt. It does not create the folder — a
 native create-folder dialog would need new main-process wiring that would break
 the isolation `pickFolder.test.ts` enforces.
+
+### Finds any file or line in the project
+
+A search box sits above the screen and works on all five. Type a term, press
+Enter, and you get file hits and line hits in one list — a query matching
+`prefabs/hazardCrate.ts` finds it whether the match was in the name or on line 40.
+Selecting a row shows the match with its line number and the term highlighted.
+
+It reuses the same walker and the same containment check the graph uses, so a
+symlink out of the project is refused the same way, and there is no second
+security boundary to keep in sync. Results are capped — 50 matches per file, 500
+in total, 2MB per file — and **every cap says so on screen** rather than showing
+a short list that looks complete.
+
+*Checked by:* `packages/app/test/shell/search.test.ts` (32),
+`packages/app/src/electron/capture-search.mjs` (a real window, real project).
+
+*Not yet:* it does not open the file in an external editor, and the search runs
+synchronously in the main process.
+
+### Ships as an installable AppImage
+
+```bash
+npm run dist:appimage          # dist/ContextForge-0.1.0-x86_64.AppImage
+scripts/install-launcher.sh    # .desktop entry + icons, or --uninstall
+```
+
+One file, runs without a system install. `scripts/install-launcher.sh` installs a
+launcher that starts it from the app menu. Without `libfuse2` the image cannot
+mount itself, so add `--appimage-extract-and-run`.
+
+*Checked by:* the packaged asar contents, and a node process importing core from
+inside the packaged tree and parsing JavaScript. See
+[docs/RUNNING.md](docs/RUNNING.md) and D55 in
+[docs/DECISIONS.md](docs/DECISIONS.md).
+
+*Not yet:* x86_64 Linux only, unsigned, AppImage only.
 
 ### Gates that fail when the rule is broken
 

@@ -1902,3 +1902,160 @@ and `packages/core/test/context/budget-round-c.test.ts`,
 against the reverted source to confirm it fails there; the parity assertions pass
 on both versions, which is the evidence that the fixes changed cost and not
 behaviour. `scripts/repro-round-c.mjs` reproduces every measurement above.
+
+### D54. One `search:project` channel, and the matching algorithm lives in the main process
+
+**Context.** In-app search across the open project: find files and code, and jump to
+the match. Two structural questions had to be answered before writing any code —
+how many IPC channels, and which side of the process boundary holds the algorithm.
+
+**One channel, not three.** `search:project` takes `{ query, kind? }` and returns
+`{ files, matches, truncated, truncatedReason, scannedFiles, skipped }`. The
+alternative was `search:files` / `search:contents` / `search:open`, and it is worse:
+a developer typing in a search box has not decided in advance which of the three they
+want. A query matching `prefabs/hazardCrate.ts` should find it whether the match was in
+the name or on line 40. `kind` narrows it instead, defaulting to `all`.
+
+**Selecting a result needs no channel, because selection is renderer state.** Which
+row is highlighted and which line is in view change nothing in the main process, so
+they cost no round trip — which is also why the jump is instant. A second channel
+would only become correct if selecting a match had to *act* in main: open the file in
+the OS editor, reveal it in a file manager, copy an absolute path. That is out of
+scope, so the channel would have been speculative generality. **"Open externally" is
+the moment it becomes justified, and it should be its own decision.**
+
+**The algorithm is in `ipcHandlers.ts`, not `renderer/search/match.ts`.** The first
+draft put the pure matching logic in the renderer and imported it from main. **It does
+not compile.** `packages/app/tsconfig.json:10` excludes `src/renderer`, so `tsc` —
+which builds `ipcHandlers.ts` — rejects the import with `TS6307 — not listed within
+the file list`. The renderer's TypeScript is checked separately, by `svelte-check`
+under `tsconfig.svelte.json`. This is not a rule anyone wrote down: it is what the
+project graph enforces. There is no main↔renderer module import anywhere in
+`src/electron/`, and there is now a reason for that.
+
+The split that follows: algorithm and I/O in `ipcHandlers.ts`, the only compiled and
+`node:`-capable side; display rules in `renderer/search/match.ts`. Both sides work from
+the same `SearchResponse` type, so they cannot disagree about what a result *is* — no
+mirror-and-compare test was needed, because only *shape* is shared, not logic.
+
+**Search reuses core's `scanFiles` and `resolveInsideRoot` rather than adding a second
+walker and a second containment check.** That duplication is exactly what D51 exists to
+prevent. A consequence worth recording: `scanFiles` skips symlinks entirely, because
+`readdirSync(withFileTypes)` reports both `isFile()` and `isDirectory()` as false for a
+symlink. So a symlink escape is filtered *one step before* search's containment loop.
+The in-handler `resolveInsideRoot` is kept anyway — `scanFiles` is core's policy about
+which files to *index*, not a guarantee about which paths are *readable*, and a
+containment check whose correctness depends on the walk's filtering never changing is
+not a containment check.
+
+**Every cap reports itself.** 50 matches per file, 500 total, 200 file hits, 2MB file
+size. Each sets `truncated: true` and contributes a sentence the UI renders under the
+box. A truncated list that looks complete is worse than an uncapped one that hangs,
+because the developer stops looking when the box tells them it has finished. A file
+skipped for size or unreadable is reported by name rather than dropped silently, for
+the same reason `projectGraph` reports `unparseable`: a file that was not searched looks
+identical to a file with nothing in it.
+
+Two smaller rules, both from writing the tests. Search runs on submit, not per
+keystroke — a walk per character queues behind every keystroke and lets an older,
+broader query land after a newer one. And `MatchHit.column` indexes the *displayed*
+line, not the original: if it indexed the original, the highlight would land short by
+exactly the indentation that was trimmed, which is invisible on an unindented line and
+wrong on every indented one. An empty query returns `ok` with empty arrays and
+`scannedFiles: 0` — nothing was walked, so claiming a count would be false.
+
+**Verified by.** `packages/app/test/shell/search.test.ts` (32 tests) and
+`packages/app/src/electron/capture-search.mjs`, which drives a real Electron window
+against the real `kart-dash-3d-v2`: `"kart"` → 24 file rows / 324 line rows / 38 files
+with the per-file cap naming itself; clicking a line row showed `capture-game.mjs`
+line 2 with `Kart` marked; an absent term → "No matches", zero rows, no stale list;
+0 console errors.
+
+### D55. Packaging an npm workspace: `directories.app`, `extraMetadata`, and an explicit `files` allowlist
+
+**Context.** Producing an installable AppImage with `electron-builder`. electron-builder
+defaults assume a single-`package.json` project. This is an npm workspace where the root
+manifest declares **no runtime dependencies** — they live in `packages/app/package.json`.
+Four defaults are wrong here, and **every one of them produced a build that SUCCEEDED
+and a package that failed at runtime.** That is the argument for checking the asar
+rather than the exit code.
+
+1. **`directories.app: "packages/app"`.** Without it, the node-module collector reads
+   the *root* manifest, finds no dependencies, and ships an AppImage containing no
+   tree-sitter, no three, no cytoscape and no zod. The only warning printed is
+   `no node modules returned while searching directories`, which sits in a wall of
+   progress lines and reads as harmless.
+2. **`extraMetadata.main`,** because there is no `main` key to read. The obvious
+   spellings both fail: `"build": { "main": … }` is rejected by the root config schema
+   (`unknown property 'main'`), and omitting it makes the build demand `index.js` at
+   the project root and fail with `Application entry file "index.js" … is corrupted`.
+   `extraMetadata` injects into the *packaged* manifest, which is what
+   electron-builder actually reads for the entry point. After two guessed spellings
+   failed, the schema shipped in `node_modules` was read instead of guessing again.
+3. **`files` as an explicit allowlist** (`!**/*` first), because the bare `node_modules`
+   electron-builder would otherwise pick up is the *root's*. Two entries are not
+   guessable, and each cost a build:
+   - **`node-gyp-build`** — a *runtime* dependency of all four tree-sitter packages;
+     their `index.js` does `require('node-gyp-build')` to locate the prebuilt `.node`.
+     It is not a build-time dependency and not a dependency of the app package, so
+     nothing surfaces it. Without it the app launches and dies with
+     `Cannot find module 'node-gyp-build'`.
+   - **`dist/ipc.js`** — `tsc` emits `src/ipc.ts` to `dist/ipc.js`, *beside*
+     `dist/electron/` rather than inside it, while `dist/electron/ipcHandlers.js`
+     imports it as `../ipc.js`. A rule listing only `dist/electron/**` silently drops
+     it, and the app dies with `ERR_MODULE_NOT_FOUND`.
+4. **Native `.node` binaries unpacked out of the asar**, because a native addon cannot
+   be loaded from inside one.
+
+**The launcher `Exec` is a single word, never a path.** This repo's path contains a
+space (`dark matter`). A `.desktop` `Exec` naming an AppImage under it must escape that
+space, and `desktop-file-validate` does **not** check for it — so an unquoted `Exec`
+passes validation and then runs the wrong command. That was hit and fixed by emitting
+`Exec=contextforge` plus a generated `~/.local/bin/contextforge` wrapper that `exec`s
+the real path. This removes the class of problem rather than escaping one instance.
+
+**Icons are rendered by `@resvg/resvg-js`, not ImageMagick.** This machine has neither
+`convert` nor `rsvg-convert`, so a script requiring either could not regenerate its own
+icon here, which would make the committed PNGs unverifiable on a clean checkout.
+`@resvg/resvg-js` is a prebuilt native binding with no system libraries and is
+**MPL-2.0** — free and open source. The PNGs are committed so `npm ci` alone is enough
+to package, and every rendered file is checked for the PNG magic number before the
+script reports success, because a script that says it worked while writing nothing
+produces a package with a blank icon.
+
+**Not mistaken for an error:** `electron-builder` runs `@electron/rebuild`, which emits
+`Attempting to build a module with a space in the path` for every tree-sitter package
+and then finishes them. This is noise here — all four grammars ship prebuilt
+`linux-x64/*.node` files (5 confirmed packed and unpacked under `app.asar.unpacked`),
+and the rebuild falls back to them.
+
+**Verified by.** `npm run dist:appimage` exits 0; the asar holds `/dist/ipc.js` and
+`/dist/errors.js` at the root; 5 linux-x64 `.node` grammars under
+`app.asar.unpacked`; the embedded `.desktop` passes `desktop-file-validate`; the
+packaged renderer bundle contains `search:project` and the search box's own strings;
+and a node process importing `@contextforge/core` from inside the packaged layout
+parsed `export const a = 1;` to `rootNode.type === "program"`, `hasError === false`.
+
+**A fifth omission, found by the integrator, not by the lane.** Merging lane-packaging
+produced an AppImage that started, spawned a full six-process Chromium tree, and logged
+an **uncaught exception in the main process**:
+`ERR_MODULE_NOT_FOUND: Cannot find package 'esbuild' imported from
+…/app.asar/dist/electron/prefabLoader.js`. `prefabLoader.ts:64` does a top-level
+`import { build, type Plugin } from 'esbuild'` — prefabs are bundled at load time — so
+**esbuild is a runtime dependency of the main process**, yet it was declared in
+`devDependencies` and was absent from the `files` allowlist. It is now in `dependencies`
+and in the allowlist, with `@esbuild/linux-x64` (its native binary). The rebuilt image
+was re-run: zero module errors, zero uncaught exceptions, six processes alive.
+
+This is the same class as `node-gyp-build` and `dist/ipc.js`, and it is the argument for
+the sentence above restated: **the build log was clean and the exit code was 0 while
+the package was broken.** It is also why the packaged app was *run*, not merely built —
+nothing short of starting it would have surfaced this.
+
+**Known limits, stated rather than implied.** x86_64 Linux only; unsigned; AppImage
+only (no `.deb`/flatpak/snap, no auto-update). Without `libfuse2` the image cannot
+mount itself, so it runs as `--appimage-extract-and-run`. **No screenshot of a running
+window could be captured.** `ffmpeg -f x11grab` works (there *is* an Xwayland display at
+`:0`), but the compositor draws straight to the DRM plane, so every grab comes back
+black even though `xwininfo -root -tree` shows a mapped 3038×1748 window titled
+`ContextForge`. That claim is **not** made.
