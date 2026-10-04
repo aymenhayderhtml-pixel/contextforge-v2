@@ -286,6 +286,37 @@ export const CHANNELS = {
   generateBrief: 'brief:generate',
   /** Read `brief.md` if it already exists. */
   readBrief: 'brief:read',
+
+  // ── Search (lane-search) ───────────────────────────────────────────────
+  /**
+   * Search the open project's files by path and by content.
+   *
+   * ## Why this is one channel and not three
+   *
+   * Searching is one question with three answers, and a developer typing in a
+   * search box has not decided in advance which of them they want: a query that
+   * matches `prefabs/hazardCrate.ts` should show that file whether the match was
+   * in its name or on line 40. Splitting "search names" and "search contents"
+   * into two channels would mean two round trips to answer one keystroke and a
+   * mode toggle that lies about what the default does.
+   *
+   * It is one channel, and it takes a `kind` only so a caller who genuinely wants
+   * one can narrow — the default, `all`, is what the search box sends.
+   *
+   * ## Why the filesystem work happens in main
+   *
+   * The renderer has no `node:fs` and no `node:path`, and core is `external` in
+   * the renderer build (D45). So the walk, the reads and the containment check
+   * all happen here, and the renderer is left with data to present — the same
+   * division every other channel in this file follows.
+   *
+   * ## Selecting a result is not a request
+   *
+   * Which row is highlighted and which line is in view are renderer state. They
+   * change nothing in the main process, so they cost no channel — which is the
+   * reason this feature needs exactly one.
+   */
+  searchProject: 'search:project',
 } as const;
 
 /** One channel name. */
@@ -515,6 +546,90 @@ export interface ContextInsufficient {
    * failure this mechanism exists to prevent.
    */
   missing: string[];
+}
+
+// ── Search (lane-search) ──────────────────────────────────────────────────────
+
+/**
+ * What a search is looking for.
+ *
+ * `all` is the default and what the search box sends. `files` and `contents`
+ * exist so the two halves can be searched alone, which is occasionally what a
+ * developer wants — "which of these files mentions it" is a different question
+ * from "where does it appear".
+ */
+export type SearchKind = 'all' | 'files' | 'contents';
+
+/**
+ * One file whose **path** matched the query.
+ *
+ * Carries no line, because a path has no line. A file whose path matched *and*
+ * whose contents matched appears in `files` and in `matches` — those are two
+ * different facts, and collapsing them would lose the line numbers.
+ */
+export interface SearchFileHit {
+  /** Project-relative path, forward slashes, as core spells it. */
+  path: string;
+}
+
+/** One **line** that matched inside a file. */
+export interface SearchMatchHit {
+  /** Project-relative path, forward slashes. */
+  path: string;
+  /** 1-based. The same number an editor shows. */
+  line: number;
+  /** 1-based character offset of the match's first character. */
+  column: number;
+  /**
+   * The matched line, whitespace-trimmed and length-capped.
+   *
+   * Capped because one minified line can be longer than the rest of the result
+   * list combined. `column` remains the real offset in the real line, so the
+   * highlight is still honest about where the match was.
+   */
+  text: string;
+}
+
+/**
+ * What one search produced.
+ *
+ * ## Why `truncated` is a first-class field and not an inference
+ *
+ * Every cap in search — per file, per result, per file size — is there to stop
+ * the UI hanging. But a capped list that *looks* complete is worse than an
+ * uncapped one that hangs: the developer stops looking, because the box told
+ * them it had finished. So the caps report themselves here, and the renderer
+ * shows the sentence rather than quietly rendering fewer rows than exist.
+ *
+ * `scannedFiles` is the total considered, so the screen can say "40 of 1200
+ * files match" rather than leaving the developer to infer that the list is
+ * short.
+ */
+export interface SearchResponse {
+  /** Files whose path matched. Capped. */
+  files: SearchFileHit[];
+  /** Lines that matched. Capped. */
+  matches: SearchMatchHit[];
+  /** True when any cap stopped the search early. */
+  truncated: boolean;
+  /**
+   * Why it stopped, as complete sentences naming the cap.
+   *
+   * Empty when `truncated` is false — so "nothing was hidden" and "something
+   * was hidden" cannot look the same on screen.
+   */
+  truncatedReason: string;
+  /** How many files were considered, before any cap. */
+  scannedFiles: number;
+  /**
+   * Files that were skipped and why, one sentence each.
+   *
+   * Reported rather than dropped, for the same reason `projectGraph` reports
+   * `unparseable`: a file that was not searched looks identical to a file with
+   * nothing in it. A developer who is told "1 file too large to search" can
+   * decide; a developer shown silence cannot.
+   */
+  skipped: string[];
 }
 
 // ── Brief (Step 4) ───────────────────────────────────────────────────────────
@@ -790,6 +905,38 @@ export interface IpcRequests {
      * means the channel and the screen cannot disagree about the shape again.
      */
     response: Result<BriefResult | null>;
+  };
+
+  // ── Search (lane-search) ─────────────────────────────────────────────────
+
+  /**
+   * Search the open project's file paths and file contents.
+   *
+   * ## An empty query is `ok`, not a refusal
+   *
+   * `query` of only whitespace returns `ok` with **empty arrays**, `truncated:
+   * false` and `scannedFiles: 0`. It is not `ok: false`.
+   *
+   * The reason is the same one that made `pickFolder` return `ok(null)` for a
+   * cancelled dialog: an empty search box is the ordinary state of a search box,
+   * and refusing it would put a red sentence on screen for the developer's very
+   * first keystroke — or for the state before their first. The empty result *is*
+   * the answer, and the renderer renders a hint rather than an error.
+   *
+   * ## `kind` defaults to `all` in the backend, not here
+   *
+   * `kind` is optional in the request so a caller can send just a query. The
+   * backend substitutes `all`, which means there is one definition of "search"
+   * rather than one per call site.
+   */
+  [CHANNELS.searchProject]: {
+    request: {
+      /** The developer's literal text. Not a regular expression. */
+      query: string;
+      /** Narrow to paths or contents. Defaults to `all`. */
+      kind?: SearchKind;
+    };
+    response: Result<SearchResponse>;
   };
 };
 
