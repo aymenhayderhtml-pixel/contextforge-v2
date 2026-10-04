@@ -1,0 +1,51 @@
+{
+  "project": "/home/aymen/Documents/dark matter/kart-dash-3d-v2",
+  "mounted": true,
+  "summaryWhenEmpty": "Type to search the project by file name or content.",
+  "matchSummary": "3 file names and 324 lines of 38 files. \"src/items.js\" matched more lines than are shown. \"src/main.js\" matched more lines than are shown.",
+  "matchFiles": [
+    "capture-game.mjs",
+    "contextforge/config.json",
+    "contextforge/layout.json",
+    "contextforge/runtime.js",
+    "docs/ARCHITECTURE.md",
+    "GEMINI.md",
+    "index.html",
+    "package.json",
+    "prefabs/index.ts",
+    "prefabs/kart.ts"
+  ],
+  "matchLineCount": 324,
+  "jumpedTo": {
+    "path": "capture-game.mjs",
+    "line": "line 2",
+    "marked": "Kart"
+  },
+  "negativeSummary": "No matches for “zzq-not-a-real-token-4d2f” in 38 files.",
+  "negativeRows": 0,
+  "namesOnlyFiles": [
+    "scene.json",
+    "src/browserSceneLoader.js",
+    "src/loadScene.js",
+    "src/scene-manager.js"
+  ],
+  "screenshots": [
+    {
+      "name": "search-01-results.png",
+      "bytes": 227692
+    },
+    {
+      "name": "search-02-jumped-to-match.png",
+      "bytes": 250755
+    },
+    {
+      "name": "search-03-no-matches.png",
+      "bytes": 157796
+    },
+    {
+      "name": "search-04-names-only.png",
+      "bytes": 153503
+    }
+  ],
+  "consoleErrors": []
+}
