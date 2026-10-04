@@ -139,6 +139,7 @@ export {
   extractSingleJsModule,
   normalizeAssetRef,
   resolveSpecifier,
+  type MissingAsset,
   type UnparseableFile,
 } from './extract/js.js';
 

@@ -1,0 +1,19 @@
+placeholder for the character model
+
+This file exists so that `extractJsProject` finds it on disk.
+
+`src/main.js` declares `loadModel('models/character.glb')` and carries a slot
+contract in `models/character.slot.json`, but until this file was added the
+fixture had no `.glb` at all — so the extractor created a node for a file that
+did not exist, and the graph asserted a file a developer could not open. That was
+the bug fixed in D48: an asset reference earns a node only once the file is
+really there.
+
+Its *contents* are irrelevant to every test that reads it. The slot contract
+lives in `character.slot.json` and is read from there, the extractor never opens
+a `.glb`, and no test in this repo parses GLB binary data. This is a text file
+on purpose: a plausible-looking binary header would suggest the tests depend on
+its content, and they do not.
+
+The sibling GLB loader, `Engine/Assets/src/GltfImporter.cpp`, lives in the
+`dark matter` repository and is what would read a real one.

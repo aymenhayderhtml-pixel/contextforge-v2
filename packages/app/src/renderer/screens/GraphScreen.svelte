@@ -31,6 +31,7 @@
     FocusedNode,
     GraphNode,
     GraphSummary,
+    MissingAsset,
     Orphan,
     UnparseableFile,
   } from '@contextforge/core';
@@ -53,6 +54,18 @@
    * broken file in it is indistinguishable from an empty graph without one.
    */
   let unparseable = $state<UnparseableFile[]>([]);
+
+  /**
+   * Asset references that resolve to nothing.
+   *
+   * Collapsed by default, unlike the unparseable banner. A project can have a
+   * handful of these legitimately (a dev harness writing screenshots outside the
+   * project is the common case), and an always-expanded list of them pushes the
+   * graph itself off the screen — which is the thing the developer opened this
+   * screen to look at. The count is always visible; the detail is one click.
+   */
+  let missingAssets = $state<MissingAsset[]>([]);
+  let missingOpen = $state(false);
 
   /**
    * The focused neighbourhood, requested from core when the selection changes.
@@ -118,6 +131,7 @@
         summary = result.value.summary;
         orphans = result.value.orphans;
         unparseable = result.value.unparseable;
+        missingAssets = result.value.missingAssets;
       } else {
         // Said out loud. An empty canvas for a project that failed to read is
         // indistinguishable from a project with no files, and the developer
@@ -127,6 +141,7 @@
         summary = null;
         orphans = [];
         unparseable = [];
+        missingAssets = [];
       }
     } catch (thrown) {
       error = thrown instanceof Error ? thrown.message : String(thrown);
@@ -134,6 +149,7 @@
       summary = null;
       orphans = [];
       unparseable = [];
+      missingAssets = [];
     } finally {
       loading = false;
     }
@@ -445,27 +461,65 @@
     <p class="status">Reading the project…</p>
   {:else if error !== null}
     <p class="status error" role="alert">{error}</p>
-  {:else if unparseable.length > 0}
+  {:else if unparseable.length > 0 || missingAssets.length > 0}
     <!--
-      Said before the canvas, because it changes what the canvas means: these
-      files are missing from the graph below. A half-written file or one saved
-      in an unexpected encoding is the usual cause, and it is worth naming
-      rather than leaving the developer to wonder why a file they can see is not
-      in the picture.
+      Two separate faults, deliberately not merged into one list.
+
+      A file that exists but could not be parsed is missing from the graph for a
+      *different reason* than a reference to a file that does not exist, and the
+      fix for each is different. Merging them would produce a list where the
+      developer cannot tell which of the two they are looking at.
+
+      Missing assets are collapsed by default: a project can legitimately have a
+      few — a dev harness writing screenshots outside the project is the common
+      case — and an always-expanded list pushes the graph itself off the screen,
+      which is the thing the developer opened this screen to look at. The count is
+      always visible; the detail is one click.
     -->
-    <div class="unparseable" role="alert">
-      <strong>{unparseable.length} file(s) could not be parsed</strong>
-      <p class="why">
-        They are <em>missing from the graph below</em> — not absent from the project.
-      </p>
-      <ul>
-        {#each unparseable as file (file.path)}
-          <li>
-            <span class="path">{file.path}</span>
-            <span class="reason-text">{file.reason}</span>
-          </li>
-        {/each}
-      </ul>
+    <div class="faults">
+      {#if unparseable.length > 0}
+        <div class="unparseable" role="alert">
+          <strong>{unparseable.length} file(s) could not be parsed</strong>
+          <p class="why">
+            They are <em>missing from the graph below</em> — not absent from the project.
+          </p>
+          <ul>
+            {#each unparseable as file (file.path)}
+              <li>
+                <span class="path">{file.path}</span>
+                <span class="reason-text">{file.reason}</span>
+              </li>
+            {/each}
+          </ul>
+        </div>
+      {/if}
+
+      {#if missingAssets.length > 0}
+        <div class="missing-files" role="alert">
+          <button
+            type="button"
+            class="missing-toggle"
+            aria-expanded={missingOpen}
+            onclick={() => (missingOpen = !missingOpen)}
+          >
+            <span class="chevron">{missingOpen ? '▼' : '▶'}</span>
+            <strong>
+              {missingAssets.length} missing file{missingAssets.length === 1 ? '' : 's'}
+            </strong>
+            <span class="hint-inline">referenced but not on disk — not in the graph below</span>
+          </button>
+          {#if missingOpen}
+            <ul>
+              {#each missingAssets as missing (missing.from + ' ' + missing.asset)}
+                <li>
+                  <span class="path">{missing.asset}</span>
+                  <span class="reason-text">referenced by {missing.from}</span>
+                </li>
+              {/each}
+            </ul>
+          {/if}
+        </div>
+      {/if}
     </div>
   {/if}
 
@@ -593,6 +647,59 @@
     padding: 0.4rem 0.6rem;
     border-radius: 2px;
     font-size: 0.8rem;
+  }
+  /* Two fault lists stack; each keeps its own border so they stay distinct. */
+  .faults {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+  }
+  .missing-files {
+    border-left: 3px solid #b4883a;
+    background: rgba(180, 136, 58, 0.08);
+    padding: 0.35rem 0.6rem;
+    border-radius: 2px;
+    font-size: 0.8rem;
+  }
+  .missing-toggle {
+    display: flex;
+    align-items: baseline;
+    gap: 0.45rem;
+    width: 100%;
+    text-align: left;
+    background: transparent;
+    border: none;
+    border-radius: 0;
+    color: inherit;
+    font: inherit;
+    padding: 0;
+    cursor: pointer;
+  }
+  .missing-toggle:hover strong {
+    color: var(--accent, #61afef);
+  }
+  .chevron {
+    font-size: 0.7rem;
+    opacity: 0.7;
+  }
+  .hint-inline {
+    opacity: 0.65;
+    font-size: 0.75rem;
+  }
+  .missing-files ul {
+    list-style: none;
+    margin: 0.35rem 0 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+    max-height: 120px;
+    overflow-y: auto;
+  }
+  .missing-files li {
+    display: flex;
+    gap: 0.5rem;
+    align-items: baseline;
   }
   .unparseable .why {
     margin: 0.2rem 0 0.35rem;

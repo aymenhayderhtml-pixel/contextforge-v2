@@ -204,9 +204,77 @@ async function main() {
         'so this frame would prove nothing',
     );
   }
+
+  /**
+   * The "Missing files" list, collapsed by default.
+   *
+   * Asserted on the *collapsed* state before expanding, because that is what the
+   * full-graph screenshot shows and what a developer first sees. A count that is
+   * correct but always-expanded would push the graph off the screen, which is
+   * the thing this screen exists for.
+   */
+  const missingCollapsed = await win.webContents.executeJavaScript(`
+    (() => {
+      const panel = document.querySelector('.graph-screen .missing-files');
+      if (!panel) return { present: false };
+      const toggle = panel.querySelector('.missing-toggle');
+      const list = panel.querySelector('ul');
+      return {
+        present: true,
+        expanded: toggle?.getAttribute('aria-expanded') ?? null,
+        label: toggle?.textContent?.replace(/\\s+/g, ' ').trim() ?? null,
+        rows: list ? list.querySelectorAll('li').length : 0,
+      };
+    })()
+  `);
+  if (!missingCollapsed.present) {
+    throw new Error(
+      '[capture] this project references 8 files that are not on disk, and the Graph ' +
+        'screen showed no Missing files list — the assets were dropped with no report',
+    );
+  }
+  if (missingCollapsed.expanded !== 'false') {
+    throw new Error(
+      `[capture] the Missing files list starts expanded (aria-expanded=${missingCollapsed.expanded}); ` +
+        'it must be collapsed so the graph stays visible',
+    );
+  }
+  console.log(`[capture] missing files (collapsed): ${missingCollapsed.label}`);
+
   await require(win, '.graph-screen .canvas canvas', 'the Cytoscape canvas');
   await new Promise((r) => setTimeout(r, 700));
   await capture(win, 'graph-01-full.png');
+
+  // Expand once, to prove the rows are real and name both ends of the reference.
+  await win.webContents.executeJavaScript(`
+    (() => {
+      const toggle = document.querySelector('.graph-screen .missing-toggle');
+      if (!toggle) throw new Error('no missing-files toggle');
+      toggle.click();
+    })()
+  `);
+  const missingExpanded = await win.webContents.executeJavaScript(`
+    (() => {
+      const rows = document.querySelectorAll('.graph-screen .missing-files li');
+      return {
+        rows: rows.length,
+        first: rows[0]?.textContent?.replace(/\\s+/g, ' ').trim() ?? null,
+      };
+    })()
+  `);
+  if (missingExpanded.rows === 0) {
+    throw new Error('[capture] expanding the Missing files list showed no rows');
+  }
+  console.log(`[capture] missing files expanded: ${missingExpanded.rows} row(s), first = ${missingExpanded.first}`);
+
+  // Collapse again: later captures in this run must not carry it open.
+  await win.webContents.executeJavaScript(`
+    (() => {
+      const toggle = document.querySelector('.graph-screen .missing-toggle');
+      if (toggle) toggle.click();
+    })()
+  `);
+  await new Promise((r) => setTimeout(r, 300));
 
   // ── 2. Focus mode, depth 1 ─────────────────────────────────────────────────
   // Click a real node in the canvas. Cytoscape hit-testing is in page
@@ -466,6 +534,8 @@ async function main() {
     nodesFull: focused.total,
     drawerRows: drawer.rows,
     drawerReasons: drawer.reasons,
+    missingAssets: missingExpanded.rows,
+    missingAssetsCollapsedLabel: missingCollapsed.label,
     screenshots,
     consoleErrors,
   };

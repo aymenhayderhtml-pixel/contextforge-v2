@@ -70,22 +70,43 @@ export interface UnparseableFile {
 }
 
 /**
+ * An asset a source file references that is not on disk.
+ *
+ * Recorded rather than silently dropped. A missing asset is a real fault — the
+ * game will try to load it and fail at runtime — and a file reference that
+ * resolves to nothing is invisible otherwise: before this, a reference to a
+ * non-existent `.png` produced a *node*, so the graph claimed the file existed
+ * and nothing anywhere said otherwise.
+ */
+export interface MissingAsset {
+  /** Project-relative path of the file doing the referencing. */
+  from: string;
+  /** Project-relative path the reference names. */
+  asset: string;
+  /** The sentence shown to a developer. Never bare. */
+  reason: string;
+}
+
+/**
  * Extract the dependency graph for a JS/Three.js project.
  *
  * `depends_on_by` is left empty here and filled in by `withDependedOnBy`: a
  * parser sees what a file imports, never what imports it.
  *
- * `onUnparseable`, if given, receives every file that could not be parsed. Such
- * a file is **omitted from the graph** rather than included with a guessed empty
- * contract: an empty contract reads as "this file imports nothing", which is a
- * plausible-looking wrong answer, whereas its absence is honest. The callback is
- * a parameter rather than a return field because `DependencyGraph` is the
- * manifest's public schema and adding a field to it would change every
- * validator.
+ * `onUnparseable` and `onMissingAsset`, if given, receive the files that could
+ * not be parsed and the asset references that resolve to nothing. Both are
+ * **omitted from the graph** rather than included with something guessed: an
+ * unparseable file given an empty contract would read as "this file imports
+ * nothing", and a missing asset given a node would read as "this file exists".
+ * Both are plausible-looking wrong answers, which is the failure SPEC R9 exists
+ * to prevent. The callbacks are parameters rather than return fields because
+ * `DependencyGraph` is the manifest's public schema and a new field would change
+ * every validator.
  */
 export function extractJsProject(
   projectRoot: string,
   onUnparseable?: (file: UnparseableFile) => void,
+  onMissingAsset?: (missing: MissingAsset) => void,
 ): DependencyGraph {
   if (!existsSync(projectRoot)) {
     throw new Error(`Project folder not found: "${projectRoot}"`);
@@ -159,6 +180,31 @@ export function extractJsProject(
     for (const assetRef of contract.assetRefs) {
       const assetId = normalizeAssetRef(assetRef);
       if (!assetId) continue;
+
+      /**
+       * The file must exist before it earns a node.
+       *
+       * This is the check the import path has always had (`resolveSpecifier`
+       * returns null for a path that is not on disk) and the asset path did not.
+       * Without it, a reference to a missing `.png` produced a node, so the graph
+       * asserted the file existed: 8 phantom nodes in `kart-dash-3d-v2`, none of
+       * which a developer could find on disk.
+       *
+       * **No node and no edge.** The edge is what makes a file look connected to
+       * a project; keeping it would preserve exactly the claim being removed, and
+       * an edge pointing at a node that does not exist is a dangling edge that
+       * every consumer then has to special-case. The problem string is the only
+       * record, which is the same shape as an unresolvable import.
+       */
+      if (!existsSync(join(projectRoot, assetId))) {
+        onMissingAsset?.({
+          from: file.relativePath,
+          asset: assetId,
+          reason: `${file.relativePath} references ${assetId}, which does not exist`,
+        });
+        continue;
+      }
+
       if (!edges.some((e) => e.from === file.relativePath && e.to === assetId)) {
         edges.push({ from: file.relativePath, to: assetId, kind: 'asset_ref' });
       }

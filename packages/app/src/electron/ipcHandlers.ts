@@ -90,6 +90,7 @@ import {
   type GraphNode,
   type GraphSummary,
   type HistoryActionResult,
+  type MissingAsset,
   type Orphan,
   type SceneEdit,
   type SceneFile,
@@ -1484,12 +1485,29 @@ export class AppBackend {
     });
   }
 
-  /** Build the graph for the Context screen. Slow, so it is never on a hot path. */
-  private buildManifestFor(root: string, onUnparseable?: (f: UnparseableFile) => void): Manifest {
+  /**
+   * Build the graph for the Context screen. Slow, so it is never on a hot path.
+   *
+   * `collect` is an options object rather than a second positional callback
+   * because there are now two of them, and a bare positional is a swap waiting
+   * to happen — passing the asset collector where the parse one goes compiles
+   * fine and silently reports nothing.
+   */
+  private buildManifestFor(
+    root: string,
+    collect?: {
+      onUnparseable?: (file: UnparseableFile) => void;
+      onMissingAsset?: (missing: MissingAsset) => void;
+    },
+  ): Manifest {
     if (existsSync(join(root, 'project.godot'))) {
       return buildManifest(root, extractGodotProject(root), new Date().toISOString());
     }
-    return buildManifest(root, extractJsProject(root, onUnparseable), new Date().toISOString());
+    return buildManifest(
+      root,
+      extractJsProject(root, collect?.onUnparseable, collect?.onMissingAsset),
+      new Date().toISOString(),
+    );
   }
 
   /**
@@ -1512,13 +1530,19 @@ export class AppBackend {
     orphans: Orphan[];
     /** Files that exist but could not be parsed, and why. */
     unparseable: UnparseableFile[];
+    /** Asset references that resolve to nothing, and why. */
+    missingAssets: MissingAsset[];
   }> {
     const root = this.root;
     if (root === null) return fail('No project is open, so there is no graph to show.');
 
     const unparseable: UnparseableFile[] = [];
+    const missingAssets: MissingAsset[] = [];
     try {
-      const manifest = this.buildManifestFor(root, (file) => unparseable.push(file));
+      const manifest = this.buildManifestFor(root, {
+        onUnparseable: (file) => unparseable.push(file),
+        onMissingAsset: (missing) => missingAssets.push(missing),
+      });
       const graph: DependencyGraph = { nodes: manifest.nodes, edges: manifest.edges };
       return ok({
         nodes: graph.nodes,
@@ -1526,6 +1550,7 @@ export class AppBackend {
         summary: summariseGraph(graph),
         orphans: findOrphans(graph),
         unparseable,
+        missingAssets,
       });
     } catch (error) {
       // The extractors throw on a missing folder and on a path that is a file.

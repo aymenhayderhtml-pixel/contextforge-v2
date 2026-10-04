@@ -45,6 +45,7 @@ import type {
   GraphEdge,
   GraphNode,
   GraphSummary,
+  MissingAsset,
   Orphan,
   SceneFile,
   SceneEdit,
@@ -691,6 +692,13 @@ export interface IpcRequests {
        * file that does not exist.
        */
       unparseable: UnparseableFile[];
+      /**
+       * Asset references that resolve to nothing.
+       *
+       * Same rule as `unparseable`: a gap the developer cannot see is
+       * indistinguishable from a file that does not exist.
+       */
+      missingAssets: MissingAsset[];
     }>;
   };
 

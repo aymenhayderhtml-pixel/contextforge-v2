@@ -192,7 +192,7 @@ The test project lives outside this repo:
 <your-projects-folder>/kart-dash-3d-v2
 ```
 
-37 source files, 46 import edges, 4 unreferenced. It deliberately contains two
+29 source files, 38 import edges, 4 unreferenced. It deliberately contains two
 broken instances so the Problems panel has something real to report.
 
 ### First five things to try
@@ -227,12 +227,21 @@ floor and four coloured karts, INSPECTOR (right).
 
 **4. Browse the graph.** Click **Graph** in the sidebar.
 
-> **Working looks like:** `37 files · 46 edges · 4 unreferenced`, and a node per
+> **Working looks like:** `29 files · 38 edges · 4 unreferenced`, and a node per
 > file. Click a node to see only its neighbourhood — the toolbar then offers a
 > **Depth** selector (1 or 2) and a **Show all files** button. Open
 > **Unreferenced (4)** for the drawer: each row says *why* it is flagged
 > (`entry point` vs `unreferenced`), because an entry point is unreferenced by
 > construction and is not dead code.
+>
+> **Also expect an "8 missing files" line** under the header, collapsed. All
+> eight are screenshot filenames in `capture-game.mjs` that resolve to nowhere
+> inside the game, so they are **not** in the graph — the graph only contains
+> files that exist. Click it to see each one and which file referenced it.
+>
+> **Why 29 and not 37:** the eight missing files were once drawn as if they
+> existed. A reference to a file that is not on disk now produces a warning
+> instead of a node, because a graph node is a claim that the file exists.
 
 **5. Apply a patch.** On the **Patch** screen, paste this into the AI reply box.
 It edits a real file in the project, so the FIND text below matches exactly:

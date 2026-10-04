@@ -51,7 +51,7 @@ matters — says *why* each one is flagged. An entry point (`index.html`,
 `main.ts`) is unreferenced by construction and is **not** dead code; a file with
 no references at all might be.
 
-![Graph screen: the whole project, 37 files and 46 edges](docs/images/graph-dependency-graph.png)
+![Graph screen: the whole project, 29 files and 38 edges](docs/images/graph-dependency-graph.png)
 
 ![Graph screen: one file's neighbourhood, with the depth selector and a way back](docs/images/graph-focus-depth1.png)
 
@@ -251,7 +251,7 @@ than fail.
 
 | | |
 | --- | --- |
-| ![Graph: the whole project, 37 files and 46 edges](docs/images/graph-dependency-graph.png) | ![Graph: one file's neighbourhood, depth 1](docs/images/graph-focus-depth1.png) |
+| ![Graph: the whole project, 29 files and 38 edges](docs/images/graph-dependency-graph.png) | ![Graph: one file's neighbourhood, depth 1](docs/images/graph-focus-depth1.png) |
 | ![Graph: the unreferenced drawer, each with its reason](docs/images/graph-unreferenced-drawer.png) | ![New Project: the gate closed on an empty idea](docs/images/newproject-gate-closed.png) |
 | ![New Project: the prompt, description embedded verbatim](docs/images/newproject-prompt-ready.png) | ![Context: ranked files, each with a reason](docs/images/context-ranked-files.png) |
 | ![Scene: Problems panel naming each failure](docs/images/problems-panel.png) | ![Scene: Inspector with three transform axes](docs/images/inspector-three-axes.png) |
@@ -547,12 +547,13 @@ on whether it is an entry point. `index.html` and `capture-game.mjs` both have
 non-empty `depends_on`; a CLI importing only `node:fs` would be labelled plain
 `unreferenced` despite being an entry point.
 
-> **A caveat on the graph itself.** Eight of this project's 37 nodes are the PNG
-> filenames in `capture-game.mjs`, and those PNGs live in this repository's
-> `screenshots/`, not in the game — Core builds an asset node for every asset
-> reference without checking that the file exists. So they appear in the graph as
-> real files and are not flagged as orphans, because something does reference
-> them. Known, and left as-is rather than fixed here.
+> **Why 29 files and not 37.** Eight of them used to be drawn: `capture-game.mjs`
+> names screenshot filenames in its source, and Core built a node for each
+> without checking that the file existed. They are not in the game, so the graph
+> asserted eight files a developer could not open. A reference to a file that is
+> not on disk now produces a **Missing files** warning under the header instead of
+> a node — a graph node is a claim that the file exists, and this one was false.
+> See [D48](docs/DECISIONS.md).
 
 **3. Attach to context records a selection; it does not use it.** Ticking a row in
 the unreferenced drawer highlights it and reports *"N file(s) attached"*. It does

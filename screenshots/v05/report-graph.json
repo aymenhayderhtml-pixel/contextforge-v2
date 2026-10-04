@@ -1,40 +1,42 @@
 {
-  "project": "<your-projects-folder>/kart-dash-3d-v2",
-  "fullGraph": "37 files · 46 edges · 4 unreferenced",
-  "focusedNode": "src/browserSceneLoader.js",
-  "nodesAtDepth1": 5,
-  "nodesAtDepth2": 25,
-  "nodesFull": 37,
+  "project": "/home/aymen/Documents/dark matter/kart-dash-3d-v2",
+  "fullGraph": "29 files · 38 edges · 4 unreferenced",
+  "focusedNode": "src/input.js",
+  "nodesAtDepth1": 3,
+  "nodesAtDepth2": 20,
+  "nodesFull": 29,
   "drawerRows": 4,
   "drawerReasons": [
-    "entry point",
-    "unreferenced"
+    "unreferenced",
+    "entry point"
   ],
+  "missingAssets": 8,
+  "missingAssetsCollapsedLabel": "▶ 8 missing files referenced but not on disk — not in the graph below",
   "screenshots": [
     {
       "name": "graph-01-full.png",
-      "path": "<your-projects-folder>/contextforge-v2/screenshots/v05/graph-01-full.png",
-      "bytes": 295345
+      "path": "/home/aymen/Documents/dark matter/contextforge 2/screenshots/v05/graph-01-full.png",
+      "bytes": 236816
     },
     {
       "name": "graph-02-focus-depth1.png",
-      "path": "<your-projects-folder>/contextforge-v2/screenshots/v05/graph-02-focus-depth1.png",
-      "bytes": 127869
+      "path": "/home/aymen/Documents/dark matter/contextforge 2/screenshots/v05/graph-02-focus-depth1.png",
+      "bytes": 110338
     },
     {
       "name": "graph-03-focus-depth2.png",
-      "path": "<your-projects-folder>/contextforge-v2/screenshots/v05/graph-03-focus-depth2.png",
-      "bytes": 259547
+      "path": "/home/aymen/Documents/dark matter/contextforge 2/screenshots/v05/graph-03-focus-depth2.png",
+      "bytes": 210723
     },
     {
       "name": "graph-04-unreferenced-drawer.png",
-      "path": "<your-projects-folder>/contextforge-v2/screenshots/v05/graph-04-unreferenced-drawer.png",
-      "bytes": 425101
+      "path": "/home/aymen/Documents/dark matter/contextforge 2/screenshots/v05/graph-04-unreferenced-drawer.png",
+      "bytes": 384193
     },
     {
       "name": "graph-05-attach-to-context.png",
-      "path": "<your-projects-folder>/contextforge-v2/screenshots/v05/graph-05-attach-to-context.png",
-      "bytes": 442898
+      "path": "/home/aymen/Documents/dark matter/contextforge 2/screenshots/v05/graph-05-attach-to-context.png",
+      "bytes": 402604
     }
   ],
   "consoleErrors": []

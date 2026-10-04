@@ -1315,3 +1315,70 @@ together against a real game project.
 
 ---
 
+
+---
+
+## D48. An asset reference earns a node only once the file exists: drop it, and report it
+
+**Context.**
+1. The asset path in `extract/js.ts` created a node for every reference. The
+   import path had always checked the file existed first — `resolveSpecifier`
+   returns `null` for a path that is not on disk, and `resolveCandidates` has an
+   `existsSync` guard at `js.ts:257`. The asset path had no check at all.
+2. The consequence: `kart-dash-3d-v2` produced **37 graph nodes, 8 of which were
+   files that did not exist**. All eight were screenshot filenames in
+   `capture-game.mjs`, which writes them outside the project. A node in the graph
+   is a claim that the file exists and is part of the project; these eight nodes
+   were false claims, and nothing anywhere said so. They were also *not* reported
+   as orphans, because something did reference them — so the drawer's count of 4
+   unreferenced files looked reassuring while a fifth of the graph was phantom.
+3. The behaviour was pinned by a test. `js.test.ts` asserted an `asset_ref` edge
+   to `models/character.glb`, and the fixture had a slot contract for it but **no
+   `.glb` file**. The test's own comment recorded the oddity and accepted it.
+
+**Decision.**
+1. **No node and no edge; the problem string is the only record.** The edge is
+   what makes a file look connected to a project, so keeping it would preserve
+   exactly the claim being removed. An edge pointing at a node that does not
+   exist is also a *dangling* edge, which every consumer would then have to
+   special-case; `danglingEdges()` is now empty on the real project, and a test
+   asserts it stays that way.
+2. The report is a second `onMissingAsset` callback beside `onUnparseable`,
+   carrying `{ from, asset, reason }` and a sentence a developer can act on
+   without opening anything: `src/foo.js references assets/x.png, which does not
+   exist`. Two callbacks rather than one because they answer different questions —
+   "I could not read this" versus "this points at nothing".
+3. The callback is a **parameter, not a return field**, for the reason D47 gave:
+   `DependencyGraph` is the manifest's public schema.
+4. The **Problems panel is not touched.** It reads `SceneSnapshot.problems`, which
+   is built in `openProject`/`loadScene`; adding a field there is a change to a
+   public schema with its own validators, which is not "if it fits without new
+   design" — it is a schema migration. The Graph screen already reports it, and it
+   is the screen where a missing file is legible, because the whole question is
+   "what is in this project". Left out deliberately, not overlooked.
+5. The **Missing files list is collapsed by default**, unlike the unparseable
+   banner. A project can legitimately have a few of these — a dev harness writing
+   screenshots outside the project is the common case — and an always-expanded
+   list pushes the graph off the screen, which is the thing the developer opened
+   the screen to look at. The count is always visible; the detail is one click.
+6. The test fixture gained a real `models/character.glb`. The two tests that
+   failed were not wrong to assert an asset node for a referenced GLB — they were
+   asserting it against a fixture that did not contain the file, so they had been
+   passing **on the bug**. Writing the file makes them test what they claim. Its
+   contents are a text placeholder on purpose, and say so: the slot contract is
+   read from `character.slot.json`, the extractor never opens a `.glb`, and a
+   plausible-looking binary header would suggest the tests depend on content they
+   do not read.
+7. **The eight are not suppressed.** `capture-game.mjs` genuinely references
+   files that do not resolve from the game root, so the honest report is eight
+   warnings. Hiding them would make the graph look cleaner and the project more
+   broken than it is.
+
+**Effect on the real project:** 37 nodes → **29**, 46 edges → **38**. Orphans stay
+at 4 and `danglingEdges` is 0. One side effect worth recording: `capture-game.mjs`
+changed from `entry_point` to plain `unreferenced`, because `findOrphans`
+classifies by whether `depends_on` is non-empty and its only dependencies *were*
+the eight phantom assets. That is the classifier being honest — the file
+genuinely imports nothing — and it is why the drawer's per-row reason matters.
+
+---
