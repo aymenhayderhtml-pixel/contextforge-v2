@@ -663,11 +663,11 @@
 
           {#if previewResult !== null}
             {@const failedCount = previewResult.files.filter((f) => !f.syntax.valid).length}
-            {#if failedCount === 0}
+            {#if previewResult.files.length > 0 && failedCount === 0}
               <p class="summary-line ok">
                 {previewResult.files.length} {previewResult.files.length === 1 ? 'file' : 'files'}, all syntax checks passed
               </p>
-            {:else}
+            {:else if previewResult.files.length > 0 && failedCount > 0}
               <p class="summary-line error">
                 {previewResult.files.length} {previewResult.files.length === 1 ? 'file' : 'files'}, {failedCount} syntax errors
               </p>
@@ -1237,7 +1237,7 @@
   .prompt {
     margin: 0;
     padding: 10px;
-    max-height: 300px;
+    max-height: 240px;
     overflow: auto;
     background: var(--bg);
     border: 1px solid var(--line);
@@ -1265,7 +1265,7 @@
     list-style: none;
     margin: 6px 0 0;
     padding: 0;
-    max-height: 180px;
+    max-height: 150px;
     overflow-y: auto;
     border: 1px solid var(--line);
     border-radius: 5px;
@@ -1291,19 +1291,26 @@
     padding: 1px 4px;
     border-radius: 3px;
     letter-spacing: 0.05em;
+    flex-shrink: 0;
   }
   .file-path {
-    flex: 1;
-    word-break: break-all;
+    font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 280px;
   }
   .verdict-ok {
     color: var(--ok);
     font-weight: 700;
+    margin-left: auto;
   }
   .verdict-error {
     color: var(--danger);
     font-size: 11px;
     font-weight: 600;
+    margin-left: auto;
+    text-align: right;
   }
   .will-create {
     margin: 8px 0 0;
