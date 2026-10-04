@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  build/icon.svg — the source icon for the packaged app.
+
+  Drawn here as SVG rather than shipped as a binary PNG because a vector
+  source is reviewable: the shapes below are the whole icon, and a diff shows
+  what changed. `scripts/install-launcher.sh` converts it to the PNGs
+  electron-builder and the desktop menu need (see `build/README.md`).
+
+  The mark is a dependency graph reduced to its smallest honest shape: one hub
+  node and the edges radiating from it. That is the thing this app produces
+  from a project folder, so the icon is the product rather than a letter.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" role="img" aria-label="ContextForge">
+  <defs>
+    <linearGradient id="plate" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1b2430"/>
+      <stop offset="1" stop-color="#0d1218"/>
+    </linearGradient>
+  </defs>
+
+  <rect x="0" y="0" width="512" height="512" rx="96" fill="url(#plate)"/>
+
+  <!-- Edges first, so nodes sit on top of them and the joins stay clean. -->
+  <g stroke="#4f9dd9" stroke-width="14" stroke-linecap="round" opacity="0.85">
+    <line x1="256" y1="256" x2="140" y2="140"/>
+    <line x1="256" y1="256" x2="372" y2="140"/>
+    <line x1="256" y1="256" x2="140" y2="372"/>
+    <line x1="256" y1="256" x2="372" y2="372"/>
+  </g>
+
+  <!-- Leaf nodes. -->
+  <g fill="#7fb8e0">
+    <circle cx="140" cy="140" r="34"/>
+    <circle cx="372" cy="140" r="34"/>
+    <circle cx="140" cy="372" r="34"/>
+    <circle cx="372" cy="372" r="34"/>
+  </g>
+
+  <!-- The hub: larger, and the one accent-coloured shape. -->
+  <circle cx="256" cy="256" r="52" fill="#f0a04b"/>
+  <circle cx="256" cy="256" r="52" fill="none" stroke="#0d1218" stroke-width="10"/>
+</svg>

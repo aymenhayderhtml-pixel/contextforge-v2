@@ -23,10 +23,69 @@
     "check:three": "node scripts/check-three-pinned.mjs",
     "lint:prefabs": "tsc --build tsconfig.json && node scripts/lint-prefabs.mjs",
     "check:native": "npm run check:native -w @contextforge/app",
+    "icons": "scripts/install-launcher.sh --render-icons",
+    "dist:appimage": "npm run typecheck && npm run build:ui -w @contextforge/app && electron-builder --linux AppImage",
     "verify": "npm run check:boundaries && npm run check:three && npm run typecheck && npm run check:svelte && npm run lint:prefabs && npm test"
   },
+  "//build": "electron-builder config. Five decisions here were forced by this being an npm workspace, and each is commented where it applies: (1) `directories.app: packages/app` selects electron-builder's two-package-json layout, so the app's OWN package.json declares the runtime dependencies and node_modules is collected from there rather than from the root, which has none. (2) `extraMetadata.main` points at the real entry, `dist/electron/main.js` relative to packages/app. There is no `main` key in electron-builder's schema (verified against app-builder-lib/scheme.json), so this cannot be set the obvious way. (3) `files` opens with `!**/*` to make the rest an allowlist, because in a workspace the bare `node_modules` electron-builder would pick up by default is only the root's, so every package must be listed — including `node-gyp-build`, which is a RUNTIME dependency of all four tree-sitter packages (`require('node-gyp-build')` in their index.js) and not a build-time one; a package without it starts, then dies on the first parse. (4) It lists `dist/ipc.js` and `dist/errors.js` as well as `dist/electron/**`, because `tsc` emits `src/ipc.ts` to `dist/ipc.js` (NOT into `dist/electron/`) and `dist/electron/ipcHandlers.js` imports `../ipc.js` — a package built without those two files starts, then dies with ERR_MODULE_NOT_FOUND. `asarUnpack` keeps the tree-sitter binaries as real files, because a native addon cannot be dlopen'd from inside an asar. See notes/lane-packaging.md and docs/RUNNING.md.",
+  "build": {
+    "appId": "ai.contextforge.app",
+    "productName": "ContextForge",
+    "extraMetadata": {
+      "main": "dist/electron/main.js",
+      "desktopName": "contextforge.desktop"
+    },
+    "artifactName": "${productName}-${version}-${arch}.${ext}",
+    "directories": {
+      "app": "packages/app",
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "!**/*",
+      "dist/electron/**/*",
+      "dist/renderer/**/*",
+      "dist/ipc.js",
+      "dist/errors.js",
+      "node_modules/three/**/*",
+      "node_modules/cytoscape/**/*",
+      "node_modules/zod/**/*",
+      "node_modules/tree-sitter/**/*",
+      "node_modules/tree-sitter-javascript/**/*",
+      "node_modules/tree-sitter-typescript/**/*",
+      "node_modules/tree-sitter-gdscript/**/*",
+      "node_modules/node-gyp-build/**/*",
+      "node_modules/node-addon-api/**/*",
+      "node_modules/@contextforge/core/**/*",
+      "node_modules/@contextforge/app/**/*"
+    ],
+    "asarUnpack": [
+      "**/node_modules/tree-sitter*/**",
+      "**/node_modules/tree-sitter/**"
+    ],
+    "linux": {
+      "target": [
+        "AppImage"
+      ],
+      "category": "Development",
+      "executableName": "contextforge",
+      "icon": "build/icon-512.png",
+      "syncDesktopName": true,
+      "synopsis": "AI context manager for game projects",
+      "description": "Reads a game project off disk, extracts a dependency graph from the real source files, and compiles that graph into an AI-ready prompt. Runs entirely locally.",
+      "desktop": {
+        "entry": {
+          "Name": "ContextForge",
+          "Comment": "Compile a game project into AI-ready context, preview patches, and edit scenes",
+          "StartupWMClass": "ContextForge"
+        }
+      }
+    }
+  },
   "devDependencies": {
+    "@resvg/resvg-js": "^2.6.2",
     "@types/node": "^22.10.2",
+    "electron-builder": "^26.15.3",
     "svelte-check": "4.7.6",
     "typescript": "^5.7.2",
     "vite": "^6.3.6",

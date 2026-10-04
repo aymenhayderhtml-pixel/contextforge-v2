@@ -9,6 +9,9 @@ dist/
 packages/*/dist/
 *.tsbuildinfo
 *.tsbuildinfo.*
+# `--appimage-extract` (and `squashfs-root/` generally) unpacks a built AppImage
+# into the repo root. It is a build artifact, never a source file.
+squashfs-root/
 
 # ── ContextForge's own runtime state ─────────────────────────────────────────
 # Written next to the project an editor session has open: opened-project
