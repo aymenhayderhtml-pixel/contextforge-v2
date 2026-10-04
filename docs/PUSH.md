@@ -34,7 +34,7 @@ Nothing here is unusual.
 
 ```bash
 cd "<your-projects-folder>/contextforge-v2"
-npm run verify          # 73 files, 1469 tests — must be green before you commit
+npm run verify          # 75 files, 1501 tests — must be green before you commit
 git add -A
 git commit -m "What changed and why"
 git push

@@ -3,24 +3,21 @@
 **Read this file first.** Then open only the files it points to. Do not read the
 whole project to answer a question this file can answer.
 
-**Update this file in the same commit as any task that changes what it says.**
-A stale AI.md costs the next agent more time than it saved. If you learn something
-this file does not say, add it here before you commit.
-
-Verify every claim against the code. A line here that is not true is worse than a
-missing one, because it will be trusted. `packages/app/test/renderer/aiDocPaths.test.ts`
-fails if any path in this file stops existing.
+**Update this file in the same commit as any task that changes what it says** — see
+the protocol at the end. Verify every claim against the code: a line here that is not
+true is worse than a missing one, because it will be trusted.
+`packages/app/test/renderer/aiDocPaths.test.ts` fails if any path here stops existing.
 
 ---
 
 ## What this project is
 
-ContextForge v2 is a local Electron desktop app for managing AI context on game
-projects. It reads a project folder off disk, extracts a dependency graph from the
-real source files, and lets you compile that graph into a prompt, preview and apply
-AI-authored patches, and edit a Godot-like scene file through a 3D viewport.
-Everything runs locally; nothing is uploaded. Core logic is a pure, headless
-TypeScript library; the UI is Svelte; parsing is native tree-sitter.
+A local Electron desktop app for managing AI context on game projects. It reads a
+project folder off disk, extracts a dependency graph from the real source files, and
+lets you compile that graph into a prompt, preview and apply AI-authored patches, and
+edit a Godot-like scene file through a 3D viewport. Everything runs locally; nothing
+is uploaded. Core logic is a pure, headless TypeScript library; the UI is Svelte;
+parsing is native tree-sitter.
 
 ---
 
@@ -69,11 +66,16 @@ packages/core/          @contextforge/core — pure, headless. No DOM, no app im
   src/extract/          project on disk -> graph: js.ts, godot.ts, files.ts
   src/graph/            analysis.ts (orphans, focus), reverse.ts (cycles, layers),
                         manifest.ts, labels.ts (label rule)
-  src/patch/            FIND/REPLACE + EDIT blocks, diffs, syntax checks
+  src/patch/            FIND/REPLACE + EDIT blocks, diffs, syntax checks.
+                        finder.ts returns Span{start,end} — a fuzzy match must
+                        replace its WHOLE region or the tail survives (D52).
+                        editBlocks.ts refuses a patch that contradicts itself.
   src/scene/            scene file, edits, prefabs, slots, scaffold prompt
   src/context/          compiler (rank -> compile -> slice), brief. The NEED:/files
                         attachment loop is the SEC-2 sink — guarded by D51.
-  src/history/          one undo/redo stack, keyed by project path
+  src/history/          one undo/redo stack, keyed by project path. Undo verifies
+                        each file against what the step recorded and refuses rather
+                        than clobbering a hand edit (D52).
   src/fs/               resolveInsideRoot — the ONE containment check (D51). Every
                         reader/writer of a project-relative path routes here.
 
@@ -149,6 +151,9 @@ Push events, main to renderer, not in `CHANNELS`:
 | A path is refused as "outside the project" | Real, almost always a symlink. `resolveInsideRoot` refuses by design (D51) |
 | A test says "was not chosen in the folder dialog" | The test opened a fixture directly; it needs `deps: { allowUnpickedRoot: 'test-only' }` |
 | `ENOENT` escapes from compileContext | Something reads `existsOnDisk`, not `ok` — they are different questions (D51) |
+| A patch applies but the file gains duplicate lines | A fuzzy match returned a start without an end — see `finder.ts` `Span` (D52) |
+| A patch is refused as "contradicts edit block N" | Two blocks touch the same region. Correct behaviour; check for duplicate headers first (D52) |
+| Undo refuses with "no longer match" | The file changed since the step. The step is kept — fix the file and retry (D52) |
 
 ---
 
@@ -255,6 +260,7 @@ being checked — see D17 and D19.
 | D40 end-to-end Electron automation | D41 full-source attachment for AI | D42 executable prefab bundling | D43 screenshots that prove their own state |
 | D44 one list, one count for Problems | D45 graph analysis runs in main, not the renderer | D46 the New Project gate is core's `checkBrief` | D47 a generator refuses to overwrite |
 | D48 an asset node only if the file exists | D49 graph labels stagger on row geometry | D50 `svelte-check` is in `verify` | D51 one containment helper + a root the renderer cannot name |
+| D52 spans, no self-contradicting patches, undo verifies before writing | | | |
 | D17 peer-deps fallback (**reconstructed**) | D18 key a generic event type by value | D19 shape before relations (**reconstructed**) | |
 
 ---
@@ -262,17 +268,15 @@ being checked — see D17 and D19.
 ## Known gaps and open bugs
 
 - **D31:** a line number in the trace skips the symbol check. Open.
-- **`findCycles` is super-linear** (D47). Not fixed.
-- **Clipboard copy is untested** — no clipboard harness exists.
+- **`findCycles` is super-linear** (D47). **Clipboard copy is untested**.
 - **`Viewport`'s `problems` prop was removed unused (D50).** It was documented as
   "shown as a notice but not rendered", which was not true — nothing read it. If
   the notice is wanted it should be built and the prop restored with a test.
-- **Two `svelte-check` warnings remain and are deliberately not suppressed (D50).**
-  `a11y_no_noninteractive_tabindex` on the two panel resizers in `SceneScreen.svelte`.
+- **Two `svelte-check` warnings remain, deliberately unsuppressed (D50)**:
+  `a11y_no_noninteractive_tabindex` on the panel resizers in `SceneScreen.svelte`.
   They are `<div role="separator">` with `aria-valuenow`, and the `tabindex` is what
-  makes the separator keyboard-reachable. Svelte 5.57.1 does not honour a
-  multi-code `svelte-ignore` for this rule. `verify` runs `--threshold error`, so
-  they do not fail the build — but they will print, and that is intentional.
+  makes the separator keyboard-reachable. `verify` runs `--threshold error`, so they
+  print but do not fail the build.
 - **SEC-5 is NOT fixed.** The context compiler *reports* an over-budget prompt but
   does not enforce it, so `maxChars: 0` returns whatever the inputs produce. A
   behaviour change with real cost consequences, not a containment defect (D51).
@@ -293,10 +297,10 @@ being checked — see D17 and D19.
 
 1. Read this file. Find the symptom in the table above.
 2. Open **only** the files it names.
-3. If this file has no answer, widen the search — and then **add what you learned
-   here, in the same commit.**
+3. If this file has no answer, widen the search — then **add what you learned here,
+   in the same commit.** That is the rule, not a suggestion.
 4. Run `npm run verify` before committing. Three green runs for anything touching
    core, the manifest schema, or shared UI.
-5. Never claim something works without a test or a run that proves it. A
-   screenshot is evidence only if the harness asserted the state it captured.
+5. Never claim something works without a test or run that proves it. A screenshot is
+   evidence only if the harness asserted the state it captured.
 6. Do not push. Leave the commit and hand over the push command.

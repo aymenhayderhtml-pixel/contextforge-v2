@@ -1735,3 +1735,79 @@ alternative — a bypass flag nobody passes — is a bypass flag everyone passes
 That is the right trade for a security boundary, and it is also why the flag's
 scope and reachability are documented at the point of definition.
 
+
+---
+
+## D52. The fuzzy passes return a span, a patch may not contradict itself, and Undo may not overwrite a hand edit
+
+**Context.** Round B of the audit. Four findings were confirmed on current main by
+reproduction before any code changed; one was already fixed; one is fixed but the
+audit's description of it was wrong.
+
+**What each finding turned out to be.**
+
+| Finding | Verdict | Reality |
+|---|---|---|
+| PATCH-1 tail duplication | **TRUE** | A block matched across blank lines left `engine.tick()` and `engine.stop()` in the file. The FIND consumed only the first three statements. |
+| PATCH-3 CRLF | **ALREADY CORRECT** | A CRLF file patches and stays CRLF. No change needed. |
+| PATCH-4 empty FIND | **TRUE** | `find: ""` was accepted and **prepended** the replacement. |
+| PATCH-6 ambiguity | **HALF TRUE** | The 0.55 threshold is gone; the pass now requires every non-blank FIND line in order. Duplicates are still refused (`matched 2 times`). |
+| PATCH-7 self-contradiction | **TRUE** | Two blocks that undid each other both applied cleanly and left the file in a state neither block asked for. |
+| NEW-7 undo clobbers a hand edit | **TRUE** | Undo wrote `before` over whatever was on disk. |
+| NEW-6 a failed undo loses the step | **TRUE** | `undoStack.pop()` ran before the writes, with no try/catch. |
+
+**Decisions.**
+
+1. **`Pass.run` returns `Span[]`, not `number[]`.** The whole of PATCH-1 is that the
+   type could not express what the functions were doing: `matchAcrossBlankLines` and
+   `matchByBoundaryAnchor` both match a **variable**-length region and returned only
+   the start, so the caller hard-coded the end as `start + findLines.length`.
+   `matchAcrossBlankLines`' own doc comment already described the correct behaviour —
+   "the returned range covers from the first to the last matched line" — and the
+   signature could not carry it. **A doc comment describing behaviour the type cannot
+   express is a spec that was never implemented.** Both now return `{start, end}`, and
+   a replacement covers the whole located region, so the tail cannot survive.
+2. **A patch may not contradict itself (PATCH-7).** Before any match is attempted, a
+   block is checked against what earlier blocks already wrote to the same file. Two
+   shapes are refused: a block whose FIND is what an earlier block **wrote** (the two
+   cancel out and both report success), and two blocks whose FINDs **overlap**.
+3. **The overlap rule requires a *distinctive* shared line.** A line of 12+ characters
+   that is not a bare closing token. `}` and `});` appear in nearly every function, and
+   counting them as overlap signals refuses every multi-block patch in a file. Two
+   control tests pin this: disjoint blocks on different functions apply, including
+   ones whose shared line is just `}`.
+4. **Undo verifies before it writes (NEW-7).** Each file is compared against what the
+   step recorded. A mismatch refuses **the whole step**, names the changed files, and
+   writes nothing — so a hand edit cannot be silently destroyed. This also covers a
+   file the developer deleted: undo refuses rather than recreating it.
+5. **A refused undo keeps its step (NEW-6).** `undoCount` stays at 1, so the developer
+   can fix the file and press Undo again. Popping before the write would leave them
+   with neither the undo nor the redo.
+6. **PATCH-4's refusal is a sentence naming the block**, consistent with PATCH-3's and
+   the rest of the engine. "FIND is empty, so there is nothing to locate. Ask the AI
+   for the exact original lines."
+
+**Cost, stated plainly.** The overlap rule is blunt. A patch with two blocks that
+happen to share a distinctive line is refused even when both changes are wanted. That
+is the intended trade — D3 is explicit that an ambiguous patch is refused rather than
+guessed — but it will refuse some patches a developer would accept, and the sentence
+says so rather than leaving them to work out why.
+
+**Two measurement errors worth recording**, because both produced confident readings
+that were wrong:
+
+- **A `ReferenceError` reported for `nodes === null` on a line that type-checked.**
+  The cause was a shell heredoc turning `\n` into two characters, so a correct string
+  comparison reported `false` and a correct `resolveInsideRoot` result looked like a
+  rejection. Three findings were read as "not fixed" because of it. **Verification
+  scripts that assert on string literals belong in a file, not in a heredoc.**
+- **Two `### EDIT:` blocks under one header parse as one.** The block pattern is
+  header-anchored, so a second FIND/REPLACE without its own header is swallowed into
+  the first block's replacement text. A test omitting the second header produced a
+  patch that looked like two contradictory blocks and behaved like one.
+
+**Not fixed.** PATCH-3 needed nothing. PATCH-6's remaining looseness — the fuzzy
+passes can still match a region whose *shape* differs — is bounded by the new
+whole-region replacement and by every non-blank line having to appear in order, and
+is not worth a stricter matcher that would refuse legitimate drifted patches.
+

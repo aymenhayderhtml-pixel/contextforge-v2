@@ -117,7 +117,11 @@ describe('recordHistoryStep / undo / redo', () => {
   });
 
   it('caps the undo stack at 20 steps and drops the oldest', () => {
+    // Each step's `after` must actually be on disk: undo refuses to write over a
+    // file that no longer holds what the step recorded (D52). A step that was
+    // never written forward is not a step, it is a record of a lie.
     for (let i = 1; i <= 25; i++) {
+      writeFileSync(join(projectDir, 'counter.txt'), `val ${i}`, 'utf-8');
       recordHistoryStep(projectDir, `Step ${i}`, [
         { path: 'counter.txt', before: `val ${i - 1}`, after: `val ${i}` },
       ]);
@@ -145,9 +149,11 @@ describe('recordHistoryStep / undo / redo', () => {
   });
 
   it('clears the redo branch when a new change is recorded', () => {
+    writeFileSync(join(projectDir, 'a.txt'), '1', 'utf-8');
     recordHistoryStep(projectDir, 'First', [
       { path: 'a.txt', before: '1', after: '2' },
     ]);
+    writeFileSync(join(projectDir, 'a.txt'), '2', 'utf-8');
     undo(projectDir);
     expect(getHistoryStatus(projectDir).canRedo).toBe(true);
 
@@ -252,7 +258,69 @@ describe('normalizeProjectPath', () => {
     writeFileSync(join(projectDir, 'sub', 'a.txt'), '1', 'utf-8');
 
     recordHistoryStep(projectDir, 'X', [{ path: 'sub/a.txt', before: '1', after: '2' }]);
+    writeFileSync(join(projectDir, 'sub', 'a.txt'), '2', 'utf-8');
     const viaSlash = undo(`${projectDir}/`);
     expect(viaSlash.success).toBe(true);
+  });
+});
+
+describe('undo refuses when the file moved under it (NEW-7)', () => {
+  it('refuses, names the file, and leaves the hand edit alone', () => {
+    writeFileSync(join(projectDir, 'u.js'), 'const a = 1;\n', 'utf-8');
+    const changes = captureAndWrite(projectDir, new Map([['u.js', 'const a = 2;\n']]));
+    recordHistoryStep(projectDir, 'PATCH #001', changes);
+
+    // The developer edits the file by hand after the patch landed.
+    writeFileSync(join(projectDir, 'u.js'), 'const a = 999;\n', 'utf-8');
+
+    const result = undo(projectDir);
+    expect(result.success).toBe(false);
+    expect(result.error).toMatch(/no longer match/);
+    // Names the file. A refusal that does not is a dead end for the developer.
+    expect(result.error).toContain('u.js');
+
+    // The bytes: the hand edit is still there, character for character.
+    expect(readFileSync(join(projectDir, 'u.js'), 'utf-8')).toBe('const a = 999;\n', 'utf-8');
+  });
+
+  it('keeps the step, so Undo can be pressed again (NEW-6)', () => {
+    writeFileSync(join(projectDir, 'u.js'), 'const a = 1;\n', 'utf-8');
+    const changes = captureAndWrite(projectDir, new Map([['u.js', 'const a = 2;\n']]));
+    recordHistoryStep(projectDir, 'PATCH #001', changes);
+    writeFileSync(join(projectDir, 'u.js'), 'const a = 999;\n', 'utf-8');
+
+    const blocked = undo(projectDir);
+    expect(blocked.success).toBe(false);
+    // The step is still on the stack. Popping it before the write would lose it
+    // and leave the developer with neither the undo nor the redo.
+    expect(blocked.undoCount).toBe(1);
+
+    // Once the file matches what the step recorded, undo works.
+    writeFileSync(join(projectDir, 'u.js'), 'const a = 2;\n');
+    const retried = undo(projectDir);
+    expect(retried.success).toBe(true);
+    expect(readFileSync(join(projectDir, 'u.js'), 'utf-8')).toBe('const a = 1;\n', 'utf-8');
+  });
+
+  it('undoes normally when nothing changed the file', () => {
+    writeFileSync(join(projectDir, 'u.js'), 'const a = 1;\n', 'utf-8');
+    const changes = captureAndWrite(projectDir, new Map([['u.js', 'const a = 2;\n']]));
+    recordHistoryStep(projectDir, 'PATCH #001', changes);
+
+    const result = undo(projectDir);
+    expect(result.success).toBe(true);
+    expect(readFileSync(join(projectDir, 'u.js'), 'utf-8')).toBe('const a = 1;\n', 'utf-8');
+  });
+
+  it('refuses when a file was DELETED by hand, and does not recreate it', () => {
+    writeFileSync(join(projectDir, 'gone.js'), 'const x = 1;\n');
+    const changes = captureAndWrite(projectDir, new Map([['gone.js', 'const x = 2;\n']]));
+    recordHistoryStep(projectDir, 'PATCH #001', changes);
+    rmSync(join(projectDir, 'gone.js'));
+
+    const result = undo(projectDir);
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('gone.js');
+    expect(existsSync(join(projectDir, 'gone.js'))).toBe(false);
   });
 });
