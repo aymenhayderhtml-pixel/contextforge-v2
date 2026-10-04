@@ -2059,3 +2059,37 @@ window could be captured.** `ffmpeg -f x11grab` works (there *is* an Xwayland di
 `:0`), but the compositor draws straight to the DRM plane, so every grab comes back
 black even though `xwininfo -root -tree` shows a mapped 3038×1748 window titled
 `ContextForge`. That claim is **not** made.
+
+---
+
+### D56: New project 5-step flow, atomic project creation from AI reply, and safe process runner
+
+**Context:** The previous new project flow was a 3-step scaffold prompt generator that required users to manually create files. In Alpha-1, the flow is expanded into a complete 5-step wizard:
+1. Name it
+2. Describe the game
+3. Take the prompt
+4. Paste the reply
+5. Install and run
+
+**Key design decisions:**
+1. **Atomic, sandbox-contained creation (`createFromReply.ts`):** `createProjectFromReply` and `previewProjectFromReply` in core parse the pasted browser AI reply using the standard `### FILE:` delimiter.
+   - All paths are validated against the target folder using `resolveInsideRoot`, preventing any path traversal or symlink escapes.
+   - Any `### EDIT:` blocks are strictly refused (there are no pre-existing files).
+   - Pre-existing non-empty target directories are refused.
+   - Writes are all-or-nothing: if any file has a path error or filesystem write failure, any written files are cleaned up and the directory is reverted.
+   - Every file undergoes tree-sitter / JSON syntax validation.
+2. **Safe Main-Process Execution (`processRunner.ts`):**
+   - Commands are strictly limited to fixed argument arrays: `['npm', 'install', '--ignore-scripts']` and `['npm', 'run', 'dev']`. No shell strings (`shell: false`) are used.
+   - Cwd is constrained strictly to the newly created project folder.
+   - Execution is rejected unless triggered by the user clicking the specific wizard step button.
+   - PATH resolution searches user-level version managers (`nvm`, `fnm`, `asdf`) and system bin paths. If npm is not found, a detailed error message lists the searched paths.
+   - Output lines are streamed to the renderer with a ring-buffer cap of 200 lines. Install carries a 3-minute timeout.
+   - Cancellation kills the entire detached process group (`process.kill(-pid, 'SIGTERM')` followed by `SIGKILL`).
+   - Dev server detection detects strictly loopback URLs (`http://127.0.0.1` or `http://localhost`). `shell.openExternal` accepts only these validated loopback URLs.
+3. **Settings and authorization:**
+   - Default projects directory (`~/Documents/ContextForge Projects`) is stored in `userData` by the main process (`settings:projects-folder:get`/`set`) and created only when the first project is created.
+   - The newly created folder is authorized into `pickedRoots` allowlist (SEC-4) only after successful creation.
+4. **UI spec compliance:**
+   - Unified input styling (B1), collapsed open link while wizard is active to prevent overflow below the fold (B4), remembered default projects folder (B5), strictly ONE button row per wizard card step (B6).
+   - Removed obsolete kart/trackSegment mentions from scaffold prompt and added "How to reply" section (C1-C3). Clear message for missing scene.json (C4). Single search helper line (A1).
+

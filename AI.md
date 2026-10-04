@@ -70,11 +70,9 @@ packages/core/          @contextforge/core — pure, headless. No DOM, no app im
   src/graph/            analysis.ts (orphans, focus), reverse.ts (cycles, layers),
                          manifest.ts, labels.ts (label rule). All walks are
                          iterative, index-pointer, never shift() (D53)
-  src/patch/            FIND/REPLACE + EDIT blocks, diffs, syntax checks. finder.ts
-                         returns Span{start,end} — a fuzzy match must replace its
-                         WHOLE region or the tail survives (D52); editBlocks.ts
-                         refuses a self-contradicting patch; diff.ts refuses past
-                         MAX_DIFF_LINES rather than OOMing (D53).
+  src/patch/            FIND/REPLACE + EDIT blocks, diffs, syntax checks, and
+                         createFromReply.ts (atomic new project writer, D56). finder.ts
+                         returns Span{start,end}; editBlocks.ts refuses contradictions.
   src/scene/            scene file, edits, prefabs, slots, scaffold prompt.
   src/context/          compiler (rank -> compile -> slice), brief. The NEED:/files
                          attachment loop is the SEC-2 sink, guarded by D51. Reads
@@ -88,6 +86,7 @@ packages/core/          @contextforge/core — pure, headless. No DOM, no app im
 packages/app/           @contextforge/app — the Electron shell
   src/electron/
     main.ts             window, menu, watcher
+    processRunner.ts    safe runner for npm install & dev (fixed args, detached kill)
     ipcHandlers.ts      EVERY channel handler lives here, ~2000+ lines, INCLUDING
                         search's matching algorithm (it is the only node:-capable,
                         tsc-compiled side). openProject only accepts a picked root
@@ -136,7 +135,7 @@ gated on an open project except **Project** itself (`Sidebar.svelte` `isScreenDi
 | **Context** | `packages/app/src/renderer/screens/ContextScreen.svelte` | `context/{compiler,rank,slice}.ts` | `context:compile` `context:rank` | `core/test/context/compiler.test.ts`, `app/test/context/*.test.ts` |
 | **Scene** | `packages/app/src/renderer/screens/SceneScreen.svelte` | `scene/{edits,sceneFile,scene.schema}.ts`, `packages/core/src/history/history.ts` | `scene:load` `scene:applyEdit` `scene:undo` `scene:redo` `scene:save` `prefabs:list` | `core/test/scene/*.test.ts`, `core/test/history/history.test.ts` |
 | **Graph** | `packages/app/src/renderer/screens/GraphScreen.svelte` | `graph/{analysis,reverse,manifest,labels}.ts`, `packages/core/src/extract/js.ts` | `graph:project` `graph:focus` | `core/test/graph/*.test.ts`, `app/test/shell/projectGraph.test.ts`, `app/test/renderer/labels.test.ts` |
-| **New Project** | `packages/app/src/renderer/screens/ProjectScreen.svelte` | `scene/{scaffoldPrompt,template}.ts` | `project:scaffold-prompt` `project:scaffold-problems` | `core/test/scene/{scaffoldPrompt,template}.test.ts`, `app/test/shell/newProject.test.ts` |
+| **New Project** | `packages/app/src/renderer/screens/ProjectScreen.svelte` | `packages/core/src/patch/createFromReply.ts`, `scene/{scaffoldPrompt,template}.ts` | `project:reply:preview` `project:reply:create` `project:install` `project:run-dev` `settings:projects-folder:get` | `core/test/patch/createFromReply.test.ts`, `app/test/shell/newProject.test.ts` |
 | **Search** | `packages/app/src/renderer/search/SearchBox.svelte` | `scanFiles` + `resolveInsideRoot` (both reused from core; the text matching is in `app/src/electron/ipcHandlers.ts`) | `search:project` | `app/test/shell/search.test.ts` (32) |
 | **Brief** | *(panel in `ContextScreen.svelte`)* | `packages/core/src/context/brief.ts` | `brief:generate` `brief:read` | `core/test/context/brief.test.ts`, `app/test/e2e/briefLoop.test.ts` |
 
@@ -144,7 +143,7 @@ There is an **AppImage** (`npm run dist:appimage`) and a `.desktop` launcher
 (`scripts/install-launcher.sh`). Packaging has its own failure modes — gotchas 21, 22, D55.
 
 Push events, main to renderer, not in `CHANNELS`:
-`scene:changedOnDisk`, `prefabs:changed`, `app:notice`.
+`scene:changedOnDisk`, `prefabs:changed`, `app:notice`, `project:process-output`, `project:process-exit`, `project:dev-ready`.
 
 ---
 
@@ -179,10 +178,12 @@ Push events, main to renderer, not in `CHANNELS`:
 | Search finds nothing, or jumps to the wrong line | `app/src/electron/ipcHandlers.ts` (`searchProject`, `searchColumnInDisplayLine`), then `app/src/renderer/search/match.ts` (D54) |
 | The packaged app starts, then dies with `ERR_MODULE_NOT_FOUND` | `package.json` `build.files` — it must list `dist/ipc.js` (tsc emits it *beside* `dist/electron/`, not inside) and `node-gyp-build` (a runtime dep of all four tree-sitter packages). The build succeeds either way; only the asar tells you (D55) |
 | An AppImage builds but ships no dependencies | `package.json` `build.directories.app` — without `packages/app` the root manifest is read, and it declares none (D55) |
-| `Cannot find module` for `dist/ipc.js` when running `dist/electron/` alone | Not a build error. `main.js` imports the sibling `ipc.js` one level above `dist/electron/`. Copy both, or package it (D55) |
-| The packaged app logs `Cannot find package 'esbuild'` | `esbuild` is imported by `prefabLoader.js` at runtime (lazily, on first bundle), so it is a RUNTIME dep — it belongs in `dependencies` AND in `build.files`, with `@esbuild/linux-x64` (D55) |
-| **Every** prefab shows `prefab failed` in the packaged app, but only the fixture fails in dev | `prefabLoader.ts` `ensureEsbuildBinaryIsExecutable`. The exact error is `spawn ENOTDIR`: esbuild `spawn`s a binary whose resolved path is *inside* `app.asar`, and Electron patches `fs` for asar but not `child_process` (gotcha 24). One shared failure, surfaced once per prefab. Check with `npm run smoke:package` |
-| The launcher installs but the app will not start | Without `libfuse.so.2` an AppImage cannot mount itself. The wrapper now detects this and adds `--appimage-extract-and-run`; a wrapper that only `exec`s the file is the bug (D55) |
+| `Cannot find module` for `dist/ipc.js` when running alone | Not a build error: `main.js` imports sibling `ipc.js` above `dist/electron/` (D55) |
+| The packaged app logs `Cannot find package 'esbuild'` | `esbuild` is a RUNTIME dep in `prefabLoader.js` — must be in `dependencies` and `files` (D55) |
+| **Every** prefab shows `prefab failed` in packaged app | `prefabLoader.ts` `ensureEsbuildBinaryIsExecutable` (`spawn ENOTDIR` from asar, gotcha 24) |
+| The launcher installs but app will not start | Needs `--appimage-extract-and-run` wrapper without `libfuse.so.2` (D55) |
+| `npm was not found` or install hangs | `app/src/electron/processRunner.ts` (PATH search across nvm/fnm/asdf; detached group kill, D56) |
+| New project creation refused | `core/src/patch/createFromReply.ts` (refuses non-empty folder, symlink escape, EDIT blocks, D56) |
 
 ---
 
@@ -212,6 +213,7 @@ Push events, main to renderer, not in `CHANNELS`:
 22. **A `.desktop` `Exec` must not name a path containing a space.** This repo's path is `dark matter`, and `desktop-file-validate` does **not** check for it — an unquoted `Exec` validates and then runs the wrong command. The launcher uses `Exec=contextforge` plus a `~/.local/bin/contextforge` wrapper (D55).
 23. **`dist/` is both `tsc`'s output root and the packaging output directory.** `rm -rf dist` to "clean the build" **deletes your AppImage**. Also: `--appimage-extract` writes `squashfs-root/` into the repo root, and node-gyp's "Attempting to build a module with a space in the path" is **noise** — the grammars ship prebuilds (D55).
 24. **Electron patches `fs` for asar, and nothing else.** `child_process` and the *synchronous* `createRequire` both hand `spawn`/resolution a path that is not a file on disk, so anything that spawns a binary or resolves synchronously from inside `app.asar` fails `ENOTDIR`. Only async ESM `import` is patched. Fix: `unpackedAsarPath` + `ESBUILD_BINARY_PATH` (D55) — but esbuild reads that variable **once, when its module is evaluated** (a module-scope constant `generateBinPath()` reads, not the live env), so esbuild must be imported *after* the override. A static `import` is hoisted and captures it too early; hence the dynamic `await import('esbuild')` after each guard.
+25. **`child_process.spawn` must run fixed argument arrays with `shell: false` and a detached group** (D56). Shell string execution invites injection. Desktop launch lacks terminal PATH, so search `~/.nvm`, `fnm`, `asdf`, system bin. Always kill `-pid` (detached group), not just `pid`, or child Node dev processes survive.
 
 ---
 
@@ -238,7 +240,7 @@ existed, and no commit, branch or dangling blob contains them. They have been
 | D44 one list, one count for Problems | D45 graph analysis runs in main, not the renderer | D46 the New Project gate is core's `checkBrief` | D47 a generator refuses to overwrite |
 | D48 an asset node only if the file exists | D49 graph labels stagger on row geometry | D50 `svelte-check` is in `verify` | D51 one containment helper + a root the renderer cannot name |
 | D52 spans, no self-contradicting patches, undo verifies before writing | **D53** iterative walks, bounded diff, enforced budget | **D54** one `search:project` channel | **D55** `directories.app` + `extraMetadata` + an explicit files allowlist |
-| D17 peer-deps fallback (**reconstructed**) | D18 key a generic event type by value | D19 shape before relations (**reconstructed**) | |
+| D17 peer-deps fallback (**reconstructed**) | D18 key a generic event type by value | D19 shape before relations (**reconstructed**) | **D56** 5-step project creation, atomic reply patch, safe runner |
 
 ---
 
@@ -246,15 +248,9 @@ existed, and no commit, branch or dangling blob contains them. They have been
 
 - **D31:** a line number in the trace skips the symbol check. Open. **Clipboard copy is untested**.
 - **Two `svelte-check` warnings remain, deliberately unsuppressed (D50)**:
-  `a11y_no_noninteractive_tabindex` on the panel resizers in `SceneScreen.svelte`.
-  They are `<div role="separator">` with `aria-valuenow`, and the `tabindex` is what
-  makes the separator keyboard-reachable. `verify` runs `--threshold error`, so they
-  print but do not fail the build.
-- **A prompt cannot be smaller than ~1,900 characters (D53)** — the opening line, the
-  `SURGICAL PATCH CONTRACT` and the `NOT ATTACHED` block. A lower `maxChars` is met by
-  dropping requested files and then reported as unreachable, not silently exceeded. Do
-  not "fix" this by trimming the contract. `maxChars: Infinity` waives the total budget
-  but NOT `MAX_FULL_FILE_CHARS`; one file is still refused above 400,000 characters.
+  `a11y_no_noninteractive_tabindex` on panel resizers in `SceneScreen.svelte` (keyboard-reachable separators).
+- **A prompt cannot be smaller than ~1,900 characters (D53)** — the opening line,
+  `SURGICAL PATCH CONTRACT` and `NOT ATTACHED` block. A lower `maxChars` reports unreachable.
 - **`scanFiles` skips symlinked files and directories** — `entry.isFile()` and
   `entry.isDirectory()` are both false for a symlink (D54). A symlink inside a project
   is therefore not searchable by content *or* name, and `skipped` can be legitimately
