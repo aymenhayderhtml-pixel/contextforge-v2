@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=ContextForge
+GenericName=AI Context Manager
+Comment=Compile a game project into AI-ready context, preview patches, and edit scenes
+Exec=contextforge %f
+Icon=contextforge
+Terminal=false
+Categories=Development;IDE;
+Keywords=context;ai;game;godot;dependency;graph;
+StartupNotify=true
+StartupWMClass=ContextForge
