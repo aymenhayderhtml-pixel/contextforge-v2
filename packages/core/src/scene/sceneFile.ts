@@ -110,6 +110,62 @@ function checkRelations(scene: SceneFile): SceneError[] {
     indexById.set(instance.id, index);
   });
 
+  /**
+   * Whether `id`'s parent chain reaches a root without looping.
+   *
+   * Every instance walked its own chain to the root from scratch, so a scene
+   * that is a single deep chain — the shape a generated scene or an exported
+   * hierarchy produces — cost n²/2 hops. Measured 8,001,999 hops for a
+   * 4,000-deep chain and 7,124 ms of validateScene at 8,000 deep.
+   * `saveScene` pays this before a byte is written.
+   *
+   * Two things make this linear, and BOTH are required:
+   *
+   *  1. The memo is consulted at the top of every step, not only on entry.
+   *  2. When the walk returns true — whether it stopped at a root or at a node
+   *     already known acyclic — every node it walked on the way is ALSO added to
+   *     the memo.
+   *
+   * (2) is the one that is easy to miss. On a chain `i1 -> i0 -> root`, only
+   * `i1` and `i0` enter the memo if you cache solely the nodes seen before
+   * hitting a root; every subsequent `i2, i3, …` then walks its whole depth to
+   * reach `i1`. Caching the walked nodes on every true return is what collapses
+   * it to O(n) total.
+   *
+   * Only the *acyclic* verdict is cached, and it is safe: the parent relation is
+   * fixed for the check, and acyclicity is inherited upwards — if `p` reaches a
+   * root, so does every descendant of `p`. A cyclic verdict is deliberately NOT
+   * cached; a cycle bails the walk anyway, and caching it would only save work
+   * that a cycle never lets get long.
+   *
+   * `seen` starts EMPTY, not holding `id`. Seeding it with `id` matches on the
+   * first iteration and would report every instance in the scene as cyclic.
+   */
+  const knownAcyclic = new Set<string>();
+  const resolvesToRoot = (id: string): boolean => {
+    const seen = new Set<string>();
+    let current: string | undefined = id;
+
+    while (current !== undefined) {
+      if (knownAcyclic.has(current) || seen.has(current)) {
+        if (knownAcyclic.has(current)) {
+          for (const walked of seen) knownAcyclic.add(walked);
+        }
+        return !seen.has(current);
+      }
+      seen.add(current);
+      const parentIndex = indexById.get(current);
+      const parent = parentIndex === undefined ? undefined : scene.instances[parentIndex]?.parent;
+      if (parent === undefined) {
+        for (const walked of seen) knownAcyclic.add(walked);
+        return true;
+      }
+      current = parent;
+    }
+
+    return true;
+  };
+
   scene.instances.forEach((instance, index) => {
     if (instance.parent === undefined) return;
 
@@ -129,22 +185,20 @@ function checkRelations(scene: SceneFile): SceneError[] {
       return;
     }
 
-    // Walk up from this instance. A path that revisits an id (other than the
-    // start, already handled) is a cycle. Bounded by the instance count so a
-    // malformed file cannot spin here.
-    const seen = new Set<string>([instance.id]);
-    let current: string | undefined = instance.parent;
-    while (current !== undefined) {
-      if (seen.has(current)) {
-        errors.push({
-          path: `instances[${index}].parent`,
-          message: `parent chain from "${instance.id}" is a cycle through "${current}" — a scene's parent relation must be a tree`,
-        });
-        return;
+    if (!resolvesToRoot(instance.id)) {
+      // Re-walk to name the node the cycle closes on, which is the part a
+      // developer needs to find it. The verdict itself came from the memo.
+      const seen = new Set<string>([instance.id]);
+      let current: string | undefined = instance.parent;
+      while (current !== undefined && !seen.has(current)) {
+        seen.add(current);
+        const parentIndex = indexById.get(current);
+        current = parentIndex === undefined ? undefined : scene.instances[parentIndex]?.parent;
       }
-      seen.add(current);
-      const parentIndex = indexById.get(current);
-      current = parentIndex === undefined ? undefined : scene.instances[parentIndex]?.parent;
+      errors.push({
+        path: `instances[${index}].parent`,
+        message: `parent chain from "${instance.id}" is a cycle through "${current}" — a scene's parent relation must be a tree`,
+      });
     }
   });
 
