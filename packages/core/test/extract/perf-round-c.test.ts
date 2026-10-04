@@ -67,18 +67,13 @@ describe('GRAPH-5 — asset-edge dedupe is linear', () => {
     }
   });
 
-  it('doubling the reference count does not quadruple the time', () => {
-    const smallDir = projectWithRefs(500);
-    const largeDir = projectWithRefs(1000);
-    try {
-      const small = ms(() => extractJsProject(smallDir));
-      const large = ms(() => extractJsProject(largeDir));
-      expect(large / small).toBeLessThan(3);
-    } finally {
-      rmSync(smallDir, { recursive: true, force: true });
-      rmSync(largeDir, { recursive: true, force: true });
-    }
-  });
+  // No doubling-ratio test here, deliberately. One was written, made robust with
+  // best-of-3, and then measured to pass on the UNFIXED implementation — taking
+  // the minimum of three runs removes precisely the super-linear term a ratio
+  // depends on to detect it. The absolute bound above is the load-bearing
+  // assertion. Note also that this finding's headline number was misattributed
+  // in the first place (see the file header), which is the deeper reason to
+  // distrust any single timing that "confirms" it.
 });
 
 describe('GRAPH-5 parity — the dedupe still produces exactly one edge per pair', () => {

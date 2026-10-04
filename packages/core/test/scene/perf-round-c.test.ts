@@ -74,12 +74,13 @@ describe('SCENE-8 — checkRelations is linear on a deep parent chain', () => {
     expect(ms(() => validateScene(deepChain(8000)))).toBeLessThan(2000);
   });
 
-  it('doubling the depth does not quadruple the time', () => {
-    // Linear is ~2x. Unfixed this was ~3.6x at every doubling measured.
-    const small = ms(() => validateScene(deepChain(4000)));
-    const large = ms(() => validateScene(deepChain(8000)));
-    expect(large / small).toBeLessThan(3);
-  });
+  // No doubling-ratio test here, deliberately. One was written, made robust with
+  // best-of-3, and then measured to pass on the UNFIXED implementation — taking
+  // the minimum of three runs removes precisely the super-linear term a ratio
+  // depends on to detect it. The absolute bound above is the load-bearing
+  // assertion: 7,124 ms unfixed against 50 ms fixed is a factor of 140, and a
+  // reintroduced quadratic cannot hide behind a 2s ceiling. A test that passes on
+  // the bug it was written for reads as evidence, so there isn't one.
 });
 
 describe('SCENE-8 parity — the memo reports exactly what the naive walk did', () => {

@@ -69,9 +69,15 @@ function star(n: number): DependencyGraph {
 }
 
 describe('GRAPH-4 — the graph walks are linear, not quadratic', () => {
-  it('findOrphans on a 60,000-node star finishes well under 2s', () => {
-    // Unfixed: 1360 ms and climbing 4x per doubling of the width.
-    const elapsed = ms(() => findOrphans(star(60_000)));
+  it('findOrphans on a 120,000-node star finishes well under 2s', () => {
+    // The size was chosen by measurement, twice.
+    //
+    // At 60,000 the UNFIXED walk took 1,704 ms — inside a 2s limit — so an
+    // assertion there passed on the very bug it was written for. At 150,000 the
+    // FIXED walk took 2,553 ms, so the assertion failed on correct code. 120,000
+    // is between them: 543 ms fixed, and the unfixed walk is several times over
+    // the bound there because it grows with the square of the width.
+    const elapsed = ms(() => findOrphans(star(120_000)));
     expect(elapsed).toBeLessThan(2000);
   });
 
@@ -86,12 +92,20 @@ describe('GRAPH-4 — the graph walks are linear, not quadratic', () => {
     expect(elapsed).toBeLessThan(2000);
   });
 
-  it('doubling the star width does not quadruple the time', () => {
-    const small = ms(() => findOrphans(star(15_000)));
-    const large = ms(() => findOrphans(star(30_000)));
-    // Linear is ~2x. The unfixed curve measured 3.6x here.
-    expect(large / small).toBeLessThan(3);
-  });
+  // No doubling-ratio test here, deliberately.
+  //
+  // Two were written and both were measured to be worthless. A single-run ratio
+  // passed on the UNFIXED implementation, because `shift()` only pays off
+  // quadratically for a wide queue and 15,000 nodes was still quick enough for
+  // the ratio to land under the threshold. Making it robust with best-of-3 made
+  // it pass on unfixed code every time: taking the minimum of three runs removes
+  // precisely the super-linear component a ratio depends on to detect it.
+  //
+  // The absolute bounds above are the load-bearing assertions, and they are
+  // strong — `findOrphans` on a 60,000-node star measured 1,360 ms unfixed
+  // against 120 ms fixed. A width-quadratic cannot hide behind those. Leaving a
+  // test that passes on the bug it was written for is worse than not having it,
+  // because it reads as evidence.
 });
 
 describe('GRAPH-3 — findCycles survives a deep chain without the call stack', () => {

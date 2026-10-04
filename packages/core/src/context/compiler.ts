@@ -22,7 +22,7 @@
  * changes model behaviour.
  */
 
-import { readFileSync } from 'node:fs';
+import { readFileSync, statSync } from 'node:fs';
 import {
   resolveInsideRoot,
   resolveInsideRootOrThrow,
@@ -106,6 +106,67 @@ export interface ContextSection {
 
 /** Default character budget. Roughly 3k tokens — enough to be useful, not a dump. */
 export const DEFAULT_MAX_CHARS = 12_000;
+
+/**
+ * Largest single file that may be attached in full, in characters.
+ *
+ * Separate from `maxChars` because the two answer different questions.
+ * `maxChars` bounds the whole prompt; this bounds one read, and it exists so a
+ * single `NEED:` line cannot make the compiler load an unbounded file into
+ * memory before any budget check has run. A 64 MB file produced a 64 MB prompt
+ * and a 16.8M token estimate — the read itself is the denial of service, so the
+ * cap has to be on the read (SEC-5).
+ *
+ * Comfortably above any real source file: 400,000 characters is roughly 12,000
+ * lines, about 400 KB of TypeScript.
+ */
+export const MAX_FULL_FILE_CHARS = 400_000;
+
+/**
+ * The refusal for a file too large to attach, in one sentence plus a way out.
+ *
+ * A gap rather than a throw or a silent skip, for the same reason a refused path
+ * is a gap: the developer pasted a `NEED:` line and asked for the file. Saying
+ * nothing leaves them unable to tell "you were refused" from "the AI was
+ * ignored" (SPEC R9).
+ */
+function oversizeFileGap(file: string, chars: number): string {
+  return (
+    `Not attached: "${file}" is ${chars.toLocaleString('en-US')} characters, over the ` +
+    `${MAX_FULL_FILE_CHARS.toLocaleString('en-US')}-character limit for attaching one file in full. ` +
+    `Ask for a narrower region of it — a function name or a line number — and it will be attached as a slice.`
+  );
+}
+
+/**
+ * Read a file for full attachment, or return why it will not be read at all.
+ *
+ * The size is checked with `statSync` BEFORE the read, never after. Reading first
+ * and measuring `source.length` afterwards is the bug this replaces: by then the
+ * 64 MB is already in memory and already inside the prompt, so the check can
+ * only report a fact it has already paid the full cost to learn (SEC-5).
+ *
+ * A `statSync` failure is treated as "do not read" rather than propagated: an
+ * unreadable file is a gap, and `compileContext` never throws for a file it
+ * cannot show (SPEC R9).
+ */
+function readForFullAttachment(
+  absolutePath: string,
+): { source: string } | { tooLarge: number } | { unreadable: true } {
+  let size: number;
+  try {
+    size = statSync(absolutePath).size;
+  } catch {
+    return { unreadable: true };
+  }
+  if (size > MAX_FULL_FILE_CHARS) return { tooLarge: size };
+
+  try {
+    return { source: readFileSync(absolutePath, 'utf-8') };
+  } catch {
+    return { unreadable: true };
+  }
+}
 
 /** Paths explicitly requested by AI or caller to be attached in full. */
 function extractFullAttachmentRequests(options: CompileOptions): Set<string> {
@@ -233,14 +294,25 @@ export function compileContext(options: CompileOptions): CompiledContext {
       );
     } else {
       const isTargetFull = fullFiles || fullRequested.has(targetFile);
-      const built = buildTargetSection(projectRoot, targetFile, targetLine, logs + issue, fullFiles, gaps, isTargetFull);
-      parts.push(built.text);
-      sections.push(built.section);
+      const built = buildTargetSection(
+        projectRoot,
+        targetFile,
+        targetLine,
+        logs + issue,
+        fullFiles,
+        gaps,
+        isTargetFull,
+      );
+      if (built !== null) {
+        parts.push(built.text);
+        sections.push(built.section);
+      }
       if (fullRequested.has(targetFile)) {
-        try {
-          const source = readFileSync(inside.value.absolutePath, 'utf-8');
-          requestedFileSizes.set(targetFile, source.length);
-        } catch {}
+        // Size-gated here too. The target is reached by `NEED:` exactly like any
+        // other requested file, so a pasted reply can name it just as easily.
+        const read = readForFullAttachment(inside.value.absolutePath);
+        if ('tooLarge' in read) gaps.push(oversizeFileGap(targetFile, read.tooLarge));
+        else if (!('unreadable' in read)) requestedFileSizes.set(targetFile, read.source.length);
       }
     }
   }
@@ -255,9 +327,18 @@ export function compileContext(options: CompileOptions): CompiledContext {
     if (file === targetFile) continue;
     const inside = resolveInsideRoot(projectRoot, file);
     if (!inside.ok || !exists(file)) continue;
-    const source = readFileSync(inside.value.absolutePath, 'utf-8');
-    requestedFileSizes.set(file, source.length);
-    parts.push(`### FILE: ${file} (full source)\n\`\`\`\n${source}\n\`\`\``);
+
+    // Size-gated before the read — see `readForFullAttachment`. The path came
+    // from pasted text, so this is the route that made a 64 MB prompt possible.
+    const read = readForFullAttachment(inside.value.absolutePath);
+    if ('unreadable' in read) continue;
+    if ('tooLarge' in read) {
+      gaps.push(oversizeFileGap(file, read.tooLarge));
+      continue;
+    }
+
+    requestedFileSizes.set(file, read.source.length);
+    parts.push(`### FILE: ${file} (full source)\n\`\`\`\n${read.source}\n\`\`\``);
     sections.push({
       file,
       kind: 'full',
@@ -288,15 +369,79 @@ export function compileContext(options: CompileOptions): CompiledContext {
   const gameName = projectRoot.split(/[\\/]/).filter(Boolean).pop() ?? 'this project';
   const requestedList = [...fullRequested].filter((f) => exists(f)).sort();
 
-  const prompt = buildPrompt({
-    gameName,
-    engine,
-    issue,
-    logs,
-    requestedFiles: requestedList,
-    body: parts.length > 0 ? parts.join('\n\n') : '(No files could be attached — see the gaps below.)',
-    gaps,
-  });
+  /**
+   * A budget that is not a real number cannot be enforced against.
+   *
+   * `maxChars: NaN`, `-100`, `0` and `Infinity` all used to fall through the
+   * `prompt.length > maxChars` test as false and return whatever the inputs
+   * produced, so the declared contract — a cap on the prompt — was simply
+   * absent (CTX-2). `Infinity` in particular reads as "no limit" and is
+   * honoured as such; every other unusable value falls back to the default,
+   * which is a real cap, so a typo produces a bounded prompt instead of an
+   * unbounded one.
+   */
+  const effectiveMaxChars = Number.isFinite(maxChars) && maxChars >= 0
+    ? maxChars
+    : maxChars === Number.POSITIVE_INFINITY
+      ? Number.POSITIVE_INFINITY
+      : DEFAULT_MAX_CHARS;
+
+  /**
+   * Drop requested files until the prompt fits, then say which ones went.
+   *
+   * Enforced by removal rather than by truncation. A truncated file is worse
+   * than an absent one: the AI receives half a source file with no marker where
+   * it stops, so it reads the end of the file as if it were the end of the
+   * logic and confidently reasons about code that is not there (SPEC R9). A
+   * missing file is a fact the prompt states plainly.
+   *
+   * Whole-file attachments go first and largest-first, because they are the
+   * discretionary ones — a slice or an outline is what the compiler chose, and
+   * keeping it is usually still useful. Only if dropping every one of them is
+   * not enough does the prompt stay over budget, and then the gap says so
+   * rather than the cap being silently violated (D33: `fullChars` is not
+   * guaranteed to exceed `chars`, and neither is `chars` guaranteed to be under
+   * `maxChars` — but a violation is always reported, never hidden).
+   */
+  const droppable = parts
+    .map((text, index) => ({ text, index }))
+    .filter(({ index }) => fullRequested.has(sections[index]?.file ?? ''))
+    .sort((a, b) => b.text.length - a.text.length);
+
+  const dropped: string[] = [];
+  const removed = new Set<number>();
+  let budget = effectiveMaxChars;
+
+  const render = (): string =>
+    buildPrompt({
+      gameName,
+      engine,
+      issue,
+      logs,
+      requestedFiles: requestedList,
+      body:
+        parts
+          .filter((_, index) => !removed.has(index))
+          .join('\n\n') || '(No files could be attached — see the gaps below.)',
+      gaps,
+    });
+
+  let prompt = render();
+  for (const { text, index } of droppable) {
+    if (prompt.length <= budget) break;
+    removed.add(index);
+    dropped.push(sections[index]?.file ?? 'a requested file');
+    budget -= text.length;
+    prompt = render();
+  }
+
+  if (dropped.length > 0) {
+    gaps.push(
+      `Dropped ${dropped.length} requested file(s) to fit the ${effectiveMaxChars}-character budget: ` +
+        `${dropped.join(', ')}. Ask for a narrower region of any of them — a function name or a line ` +
+        `number — and it will be attached as a slice.`,
+    );
+  }
 
   const fullPrompt = buildPrompt({
     gameName,
@@ -308,11 +453,43 @@ export function compileContext(options: CompileOptions): CompiledContext {
     gaps,
   });
 
-  // An over-budget prompt is reported rather than silently shipped: the caller
-  // gets a number and a gap entry, and can ask for a narrower slice.
-  if (prompt.length > maxChars) {
+  // The budget is now enforced by the drop loop above, so reaching here means the
+  // prompt still exceeds it with every droppable section already gone. Reported,
+  // never hidden — but the sentence says so plainly rather than implying the cap
+  // was met.
+  if (prompt.length > effectiveMaxChars) {
+    // The floor: the prompt's mandatory parts — the opening line, the "FILE
+    // CONTEXT" wrapper and the SURGICAL PATCH CONTRACT — are around 1,900
+    // characters and cannot be dropped. A budget below that is not a request for
+    // a smaller prompt, it is a request for a different prompt, and the only two
+    // available answers are to ship a contract-less prompt (every patch would
+    // then fail to apply) or to say the request is impossible.
+    //
+    // So the floor is NAMED rather than quietly violated. `chars` may exceed
+    // `maxChars` in exactly this one case, and the gap says why (D33).
+    const floor = buildPrompt({
+      gameName,
+      engine,
+      issue,
+      logs,
+      requestedFiles: requestedList,
+      body: '(No files could be attached — see the gaps below.)',
+      gaps,
+    }).length;
     const requestedAttached = sections.filter((s) => fullRequested.has(s.file));
-    let budgetWarning = `Prompt is ${prompt.length} characters, over the ${maxChars} budget.`;
+    let budgetWarning = `Prompt is ${prompt.length} characters, over the ${effectiveMaxChars} budget.`;
+    // Unconditional, and not conditioned on `dropped`: the floor applies whenever
+    // the prompt is over budget with nothing left to drop, whether the files went
+    // via the drop loop or were already refused by the per-file size gate. In the
+    // second case `dropped` is empty and a conditional sentence would stay silent
+    // about a limit that genuinely cannot be met.
+    budgetWarning +=
+      ` The prompt's own required parts — the opening, the patch contract and the NOT ` +
+      `ATTACHED block — are ${floor} characters on their own, so no budget below ${floor} ` +
+      `can be met; this is that floor, not a missed cap.`;
+    if (dropped.length > 0) {
+      budgetWarning += ` Every requested file was dropped and it is still over.`;
+    }
     if (requestedAttached.length > 0) {
       const details = requestedAttached
         .map((s) => `${s.file} (${requestedFileSizes.get(s.file) ?? 0} chars)`)
@@ -321,12 +498,16 @@ export function compileContext(options: CompileOptions): CompiledContext {
     }
     budgetWarning += ' Re-run with a target line, or fewer ranked files.';
     gaps.push(budgetWarning);
+    // The gap was added after the prompt was rendered, so it is not yet IN the
+    // prompt. D30: a gap the developer can see must also be in the text the AI
+    // reads. Rebuild once so the AI is told the same thing the screen shows.
+    prompt = render();
   }
 
   return {
     prompt,
     ranked,
-    sections,
+    sections: sections.filter((_, index) => !removed.has(index)),
     hasGaps: gaps.length > 0,
     gaps,
     chars: prompt.length,
@@ -353,6 +534,10 @@ interface BuiltSection {
  *  2. a function named in the description;
  *  3. a window around the line;
  *  4. the whole file, if it is small enough to be worth it.
+ *
+ * Returns null when the file is over {@link MAX_FULL_FILE_CHARS} and was asked
+ * for in full — the caller records the refusal as a gap. Null rather than a
+ * throw, because `compileContext` never throws for a file it cannot show.
  */
 function buildTargetSection(
   projectRoot: string,
@@ -362,16 +547,30 @@ function buildTargetSection(
   fullFiles: boolean,
   gaps: string[],
   forceFull = false,
-): BuiltSection {
+): BuiltSection | null {
   const absolute = resolveInsideRootOrThrow(projectRoot, file).absolutePath;
-  const source = readFileSync(absolute, 'utf-8');
 
+  /**
+   * Full attachment is size-gated before the read, and the gate is shared with
+   * the `NEED:` loop. Falling back to the outline rather than refusing outright
+   * would be wrong here: the caller asked for this specific file and silently
+   * substituting its interface is the plausible-looking wrong answer this app
+   * exists to prevent (SPEC R9).
+   */
   if (fullFiles || forceFull) {
+    const read = readForFullAttachment(absolute);
+    if ('unreadable' in read) return null;
+    if ('tooLarge' in read) {
+      gaps.push(oversizeFileGap(file, read.tooLarge));
+      return null;
+    }
     return {
-      text: `### FILE: ${file} (full source)\n\`\`\`\n${source}\n\`\`\``,
+      text: `### FILE: ${file} (full source)\n\`\`\`\n${read.source}\n\`\`\``,
       section: { file, kind: 'full', reason: 'Whole file attached at the caller\'s request' },
     };
   }
+
+  const source = readFileSync(absolute, 'utf-8');
 
   const lineCount = source.split('\n').length;
   const outline = buildOutline(file, source);
@@ -621,8 +820,20 @@ function buildFullBody(projectRoot: string, ranked: RankedFile[]): string {
   for (const candidate of ranked.slice(0, AUTO_ATTACH_COUNT + 3)) {
     const inside = resolveInsideRoot(projectRoot, candidate.file);
     if (!inside.ok) continue;
+    /**
+     * Size-gated, for the same reason as the real read above.
+     *
+     * This body exists only to compute `fullChars` — a figure shown in the
+     * Context screen as "what this would have cost". A file too large to attach
+     * is skipped rather than read, so the *savings* number simply does not
+     * count it. That is the right answer: the alternative is reading a 64 MB
+     * file purely to render a comparison figure nobody will act on, which is
+     * the same denial of service SEC-5 is about.
+     */
+    const read = readForFullAttachment(inside.value.absolutePath);
+    if (!('source' in read)) continue;
     parts.push(
-      `### FILE: ${candidate.file}\n\`\`\`\n${readFileSync(inside.value.absolutePath, 'utf-8')}\n\`\`\``,
+      `### FILE: ${candidate.file}\n\`\`\`\n${read.source}\n\`\`\``,
     );
   }
   return parts.length > 0 ? parts.join('\n\n') : '(No files could be attached.)';

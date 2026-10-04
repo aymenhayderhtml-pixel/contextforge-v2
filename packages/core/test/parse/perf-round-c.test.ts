@@ -30,24 +30,48 @@ function ms(fn: () => unknown): number {
 }
 
 describe('CTX-3 — the defect walk is linear, not quadratic', () => {
-  it('80 KB of generated source is defect-checked in well under 2s', () => {
-    // Unfixed: 23,583 ms. `parser.parse` alone is 5 ms of that.
+  it('80 KB of generated source still parses successfully', () => {
+    // Correctness, not speed: the fix must not have changed what `tryParse`
+    // accepts. Unfixed this cost 23,583 ms; `parser.parse` alone is 5 ms of that.
     const outcome = tryParse(generatedModule(80), 'generated.js');
     expect(outcome.ok).toBe(true);
   });
 
-  it('the 80 KB case finishes in under 2s', () => {
+  it('the 80 KB case finishes in under 2s, measured best-of-3', () => {
+    // Best-of-3 rather than a single run. A single timing of a fast operation is
+    // dominated by scheduler noise — this failed once under the full suite while
+    // passing 5/5 in isolation — and taking the minimum drops that noise.
+    //
+    // An ABSOLUTE limit, deliberately not a doubling ratio. The gap is 23,583 ms
+    // unfixed against 172 ms fixed, a factor of 137, so an absolute bound
+    // separates the two decisively where a ratio does not: a ratio test here was
+    // measured PASSING on the unfixed code on a fast machine, and making it
+    // best-of-3 made it pass on unfixed code every time, because taking a
+    // minimum removes precisely the super-linear term a ratio depends on to
+    // detect it. Both versions were tried; only this one works.
     const source = generatedModule(80);
-    expect(ms(() => tryParse(source, 'generated.js'))).toBeLessThan(2000);
+    let lowest = Number.POSITIVE_INFINITY;
+    for (let i = 0; i < 3; i++) {
+      lowest = Math.min(lowest, ms(() => tryParse(source, 'generated.js')));
+    }
+    expect(lowest).toBeLessThan(2000);
   });
 
-  it('doubling the input does not quadruple the time', () => {
-    // Linear is ~2x. Unfixed this was 3.09x at 10->20 KB and 3.6x at 20->40 KB.
-    // The threshold is 3x: tight enough to fail the quadratic curve, loose
-    // enough to survive a loaded machine.
-    const small = ms(() => tryParse(generatedModule(10), 'small.js'));
-    const large = ms(() => tryParse(generatedModule(20), 'large.js'));
-    expect(large / small).toBeLessThan(3);
+  it('a 40 KB case — over the audited 16 KB failure size — stays under 2s', () => {
+    // One size beyond what the audit reported, to show the fix is not tuned to
+    // exactly the case that was measured.
+    //
+    // Deliberately 40 KB and not 160 KB. Reverting the source to confirm these
+    // assertions bite showed that an 80 KB unfixed parse alone runs 23 s, so a
+    // 160 KB case would put a 90-second test in the suite. A test that proves its
+    // point by hanging the runner is a test nobody will keep running. 40 KB is
+    // ~5 s unfixed and comfortably over any plausible threshold.
+    const source = generatedModule(40);
+    let lowest = Number.POSITIVE_INFINITY;
+    for (let i = 0; i < 3; i++) {
+      lowest = Math.min(lowest, ms(() => tryParse(source, 'generated.js')));
+    }
+    expect(lowest).toBeLessThan(2000);
   });
 });
 

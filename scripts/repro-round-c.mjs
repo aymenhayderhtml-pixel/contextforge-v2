@@ -42,12 +42,21 @@ for (const kb of [10, 20, 40, 80]) {
 }
 
 // ---------- PATCH-5: the diff ----------
+// Past MAX_DIFF_LINES the engine now refuses by design, so the script reports the
+// refusal rather than timing a table that no longer gets built.
 for (const n of [2000, 4000, 8000]) {
   const before = Array.from({ length: n }, (_, i) => `line ${i}`).join('\n');
   const after = Array.from({ length: n }, (_, i) => (i % 3 === 0 ? `LINE ${i}` : `line ${i}`)).join('\n');
-  const r = ms(() => generateUnifiedDiff(before, after));
-  report(`PATCH-5 diffLines n=${n}`, `${r.ms.toFixed(0)} ms`, r.ms > 2000 ? 'TOO SLOW' : 'ok');
-  if (r.ms > 3000) break;
+  let out;
+  try {
+    const r = ms(() => generateUnifiedDiff(before, after));
+    report(`PATCH-5 diffLines n=${n}`, `${r.ms.toFixed(0)} ms`, r.ms > 2000 ? 'TOO SLOW' : 'ok');
+    out = true;
+  } catch (e) {
+    report(`PATCH-5 diffLines n=${n}`, e.constructor.name, 'REFUSED (by design)');
+    out = true;
+  }
+  if (!out) break;
 }
 
 // ---------- GRAPH-4: queue.shift ----------
@@ -140,13 +149,28 @@ for (const n of [500, 1000, 2000, 4000]) {
 {
   const dir = mkdtempSync(join(tmpdir(), 'sec5-'));
   mkdirSync(join(dir, 'src'), { recursive: true });
+  // Past MAX_FULL_FILE_CHARS (400k), so the size gate refuses before reading.
   writeFileSync(join(dir, 'src', 'big.ts'), 'x'.repeat(4 * 1024 * 1024) + '\n');
   const r = ms(() => compileContext({
     projectRoot: dir, issue: 'NEED: src/big.ts', maxChars: 1000,
   }));
   report('SEC-5 prompt chars vs maxChars=1000', r.out.chars, r.out.chars > 1000 ? 'NOT ENFORCED' : 'enforced');
+  console.log('           gap:', r.out.gaps[0]?.slice(0, 150));
   const r0 = ms(() => compileContext({ projectRoot: dir, issue: 'NEED: src/big.ts', maxChars: 0 }));
   report('CTX-2 prompt chars vs maxChars=0', r0.out.chars, r0.out.chars > 0 ? 'NOT ENFORCED' : 'enforced');
+}
+
+// A file UNDER the size cap, so the per-read gate passes and only the total
+// budget is left to enforce. This is the case the audit's numbers came from.
+{
+  const dir = mkdtempSync(join(tmpdir(), 'sec5b-'));
+  mkdirSync(join(dir, 'src'), { recursive: true });
+  writeFileSync(join(dir, 'src', 'mid.ts'), 'y'.repeat(200_000) + '\n');
+  const r = ms(() => compileContext({
+    projectRoot: dir, issue: 'NEED: src/mid.ts', maxChars: 2000,
+  }));
+  report('CTX-2 mid-size file, maxChars=2000', r.out.chars, r.out.chars > 2000 ? 'NOT ENFORCED' : 'enforced');
+  console.log('           gap:', r.out.gaps[0]?.slice(0, 150));
 }
 
 console.log('\nDone.');
