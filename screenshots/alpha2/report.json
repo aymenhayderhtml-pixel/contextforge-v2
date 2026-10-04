@@ -1,0 +1,46 @@
+{
+  "screenshots": [
+    {
+      "name": "01-step1-new-project-name.png",
+      "bytes": 162517,
+      "path": "/home/aymen/Documents/dark matter/contextforge 2/screenshots/alpha2/01-step1-new-project-name.png"
+    },
+    {
+      "name": "02-step2-zombie-idea.png",
+      "bytes": 160228,
+      "path": "/home/aymen/Documents/dark matter/contextforge 2/screenshots/alpha2/02-step2-zombie-idea.png"
+    },
+    {
+      "name": "03-step3-built-prompt.png",
+      "bytes": 212599,
+      "path": "/home/aymen/Documents/dark matter/contextforge 2/screenshots/alpha2/03-step3-built-prompt.png"
+    },
+    {
+      "name": "04-step4-deepseek-reply.png",
+      "bytes": 165868,
+      "path": "/home/aymen/Documents/dark matter/contextforge 2/screenshots/alpha2/04-step4-deepseek-reply.png"
+    },
+    {
+      "name": "05-step5-project-created.png",
+      "bytes": 170493,
+      "path": "/home/aymen/Documents/dark matter/contextforge 2/screenshots/alpha2/05-step5-project-created.png"
+    },
+    {
+      "name": "06-step5-install-packages.png",
+      "bytes": 171130,
+      "path": "/home/aymen/Documents/dark matter/contextforge 2/screenshots/alpha2/06-step5-install-packages.png"
+    },
+    {
+      "name": "07-step5-run-game.png",
+      "bytes": 171293,
+      "path": "/home/aymen/Documents/dark matter/contextforge 2/screenshots/alpha2/07-step5-run-game.png"
+    },
+    {
+      "name": "08-browser-game-running.png",
+      "bytes": 207035,
+      "path": "/home/aymen/Documents/dark matter/contextforge 2/screenshots/alpha2/08-browser-game-running.png"
+    }
+  ],
+  "consoleErrors": [],
+  "timestamp": "2026-10-04T15:26:09.672Z"
+}
