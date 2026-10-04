@@ -148,6 +148,8 @@ describe('New Project — End-to-End flow', () => {
         });
       }
 
+      const userDataDir = createTempDir();
+      const documentsDir = createTempDir();
       const backend = new AppBackend(
         (event, payload) => {
           emittedEvents.push({ event, payload });
@@ -158,7 +160,11 @@ describe('New Project — End-to-End flow', () => {
             }
           }
         },
-        { allowUnpickedRoot: 'test-only' },
+        {
+          allowUnpickedRoot: 'test-only',
+          userDataPath: userDataDir,
+          documentsPath: documentsDir,
+        },
       );
 
       // 1. Create the project in a temporary directory via createProjectReply

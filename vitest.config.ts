@@ -39,6 +39,7 @@ export default defineConfig({
   test: {
     include: ['packages/*/test/**/*.test.ts'],
     pool: 'forks',
+    globalSetup: ['./packages/app/test/globalSetup.ts'],
     // The watcher tests wait on real `fs.watch` events behind a 150ms debounce,
     // and the smoke suite extracts a whole real project, so the timeout has to be
     // generous. These are the only tests that wait.

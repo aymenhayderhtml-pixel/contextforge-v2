@@ -922,6 +922,29 @@ export interface FolderPickerLike {
   showOpenDialog(options: OpenFolderOptions): Promise<OpenFolderResult>;
 }
 
+export interface BackendDeps {
+  picker?: FolderPickerLike;
+  /**
+   * Lets `openProject` accept a folder the dialog did not return.
+   *
+   * **For tests only.** A test builds a backend and opens a fixture in a temp
+   * directory; there is no native dialog to drive, and mocking one per test
+   * would be a second, worse way of naming "this is not a user gesture". The
+   * literal `'test-only'` is compared by value so the check reads as closed by
+   * default, and nothing on the IPC surface can set it: `deps` is fixed when
+   * `registerHandlers` builds the backend at startup.
+   *
+   * A test that wants to exercise the real behaviour passes nothing and asserts
+   * the refusal — `auditSecurity.test.ts` does exactly that.
+   */
+  allowUnpickedRoot?: 'test-only';
+  userDataPath?: string;
+  documentsPath?: string;
+  defaultProjectsFolder?: string;
+  openExternal?: (url: string) => Promise<void>;
+  npmPath?: string;
+}
+
 /** The request each channel carries, as the handler map declares it. */
 interface Requests {
   [CHANNELS.openProject]: { root: string };
@@ -1034,26 +1057,7 @@ export class AppBackend {
      * silent no-op. Named fields also mean the next optional capability is
      * additive instead of another parameter nobody remembers the order of.
      */
-    private readonly deps: {
-      picker?: FolderPickerLike;
-      /**
-       * Lets `openProject` accept a folder the dialog did not return.
-       *
-       * **For tests only.** A test builds a backend and opens a fixture in a temp
-       * directory; there is no native dialog to drive, and mocking one per test
-       * would be a second, worse way of naming "this is not a user gesture". The
-       * literal `'test-only'` is compared by value so the check reads as closed by
-       * default, and nothing on the IPC surface can set it: `deps` is fixed when
-       * `registerHandlers` builds the backend at startup.
-       *
-       * A test that wants to exercise the real behaviour passes nothing and asserts
-       * the refusal — `auditSecurity.test.ts` does exactly that.
-       */
-      allowUnpickedRoot?: 'test-only';
-      userDataPath?: string;
-      openExternal?: (url: string) => Promise<void>;
-      npmPath?: string;
-    } = {},
+    private readonly deps: BackendDeps = {},
   ) {}
 
   // ── Handlers ─────────────────────────────────────────────────────────────
@@ -2491,7 +2495,11 @@ export class AppBackend {
   async projectsFolder(
     request: { action: 'get' } | { action: 'set'; folder: string },
   ): Promise<Result<{ folder: string }>> {
-    const defaultFolder = join(homedir(), 'Documents', 'ContextForge Projects');
+    const defaultFolder =
+      this.deps.defaultProjectsFolder ??
+      (this.deps.documentsPath
+        ? join(this.deps.documentsPath, 'ContextForge Projects')
+        : join(homedir(), 'Documents', 'ContextForge Projects'));
     const settingsPath = this.deps.userDataPath
       ? join(this.deps.userDataPath, 'settings.json')
       : null;

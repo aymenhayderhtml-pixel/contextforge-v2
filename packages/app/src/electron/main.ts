@@ -158,6 +158,8 @@ const backend = new AppBackend(
   {
     picker,
     userDataPath: app.getPath('userData'),
+    documentsPath: app.getPath('documents'),
+    defaultProjectsFolder: join(app.getPath('documents'), 'ContextForge Projects'),
     openExternal: async (url) => {
       await shell.openExternal(url);
     },

@@ -11,8 +11,8 @@
  *   - reports exact error when npm is not found
  */
 
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
-import { homedir, tmpdir } from 'node:os';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { CHANNELS, EVENTS, type EventName } from '../../src/ipc.js';
@@ -56,9 +56,16 @@ describe('New Project backend IPC handlers', () => {
   it('previews AI replies without creating the folder or writing files', async () => {
     const base = tempDir();
     const emitted: Array<{ event: string; payload: unknown }> = [];
-    const backend = new AppBackend((event, payload) => {
-      emitted.push({ event, payload });
-    });
+    const backend = new AppBackend(
+      (event, payload) => {
+        emitted.push({ event, payload });
+      },
+      {
+        userDataPath: tempDir(),
+        documentsPath: tempDir(),
+        defaultProjectsFolder: join(tempDir(), 'ContextForge Projects'),
+      },
+    );
 
     const res = await backend.previewProjectReply({
       parentFolder: base,
@@ -82,7 +89,11 @@ describe('New Project backend IPC handlers', () => {
       (event, payload) => {
         emitted.push({ event, payload });
       },
-      { userDataPath: userData },
+      {
+        userDataPath: userData,
+        documentsPath: tempDir(),
+        defaultProjectsFolder: join(tempDir(), 'ContextForge Projects'),
+      },
     );
 
     const createRes = await backend.createProjectReply({
@@ -107,19 +118,19 @@ describe('New Project backend IPC handlers', () => {
 
   it('manages default projects folder in userData without pre-creating it', async () => {
     const userData = tempDir();
-    const backend = new AppBackend(() => {}, { userDataPath: userData });
+    const docs = tempDir();
+    const defaultFolder = join(docs, 'ContextForge Projects');
+    const backend = new AppBackend(() => {}, {
+      userDataPath: userData,
+      documentsPath: docs,
+      defaultProjectsFolder: defaultFolder,
+    });
 
-    // Clean up empty default folder if leftover from previous run so we can test pre-creation
-    const defaultTarget = join(homedir(), 'Documents', 'ContextForge Projects');
-    if (existsSync(defaultTarget) && readdirSync(defaultTarget).length === 0) {
-      rmSync(defaultTarget, { recursive: true, force: true });
-    }
-
-    // 1. Initial get returns default ~/Documents/ContextForge Projects
+    // 1. Initial get returns injected default projects folder
     const initial = await backend.projectsFolder({ action: 'get' });
     expect(initial.ok).toBe(true);
     if (!initial.ok) return;
-    expect(initial.value.folder).toMatch(/ContextForge Projects/);
+    expect(initial.value.folder).toBe(defaultFolder);
     // Must NOT create the folder on disk yet!
     expect(existsSync(initial.value.folder)).toBe(false);
 
@@ -138,7 +149,11 @@ describe('New Project backend IPC handlers', () => {
   it('refuses dev server if package.json has no dev script', async () => {
     const proj = tempDir();
     writeFileSync(join(proj, 'package.json'), JSON.stringify({ name: 'no-dev' }));
-    const backend = new AppBackend(() => {});
+    const backend = new AppBackend(() => {}, {
+      userDataPath: tempDir(),
+      documentsPath: tempDir(),
+      defaultProjectsFolder: join(tempDir(), 'ContextForge Projects'),
+    });
 
     const res = await backend.runProjectDev({ projectPath: proj });
     expect(res.ok).toBe(false);
@@ -160,6 +175,9 @@ describe('New Project backend IPC handlers', () => {
 
     const openedUrls: string[] = [];
     const backend = new AppBackend(() => {}, {
+      userDataPath: tempDir(),
+      documentsPath: tempDir(),
+      defaultProjectsFolder: join(tempDir(), 'ContextForge Projects'),
       openExternal: async (url) => {
         openedUrls.push(url);
       },
