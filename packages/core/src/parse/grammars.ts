@@ -275,6 +275,19 @@ export function tryParse(source: string, filePath: string): ParseOutcome {
  *
  * The walk is depth-first in source order and returns as soon as a defect is
  * found, so a valid file costs one full traversal and a broken one stops early.
+ *
+ * `node.children` is read ONCE per node into a local, and that is the whole fix.
+ * In the tree-sitter Node binding `.children` is not a property that returns a
+ * cached array — every read MATERIALISES fresh SyntaxNode objects for the entire
+ * subtree. The loop below used to read it twice (once for `.length`, once per
+ * index), and since a node's cost was proportional to its own subtree size, the
+ * sum over siblings went quadratic: the audit measured 23.6 s for an 80 KB
+ * generated module where `parser.parse` alone is 5 ms, and 3.09x time for a 2x
+ * input. That runs on the main thread, so one generated file froze the whole app
+ * — every IPC channel, the watchers and the UI behind them.
+ *
+ * Hoisting it does not change which node is found: same nodes, same order, same
+ * first-defect-wins result (D53).
  */
 function findFirstDefect(root: Parser.SyntaxNode): Parser.SyntaxNode | null {
   const stack: Parser.SyntaxNode[] = [root];
@@ -287,9 +300,11 @@ function findFirstDefect(root: Parser.SyntaxNode): Parser.SyntaxNode | null {
       return node;
     }
 
+    // Read once. See above.
+    const children = node.children;
     // Pushed in reverse so children are visited left to right.
-    for (let i = node.children.length - 1; i >= 0; i--) {
-      const child = node.children[i];
+    for (let i = children.length - 1; i >= 0; i--) {
+      const child = children[i];
       if (child) stack.push(child);
     }
   }

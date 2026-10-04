@@ -129,6 +129,21 @@ export function extractJsProject(
 
   const nodes: GraphNode[] = [];
   const edges: GraphEdge[] = [];
+/**
+   * Membership for the asset-edge dedupe below: source path -> assets it has
+   * already emitted an edge to.
+   *
+   * `edges.some(...)` before every push scanned the entire accumulated edge list
+   * once per asset reference, so a file referencing 4,000 assets cost
+   * ~8,000,000 comparisons — 24 seconds in the audit. A Set makes the check O(1)
+   * and produces the identical edge list in the identical order, because it
+   * replaces only the *test*, not the push (D53).
+   *
+   * Deliberately not shared with the import path: `normalizeDeps` already dedupes
+   * imports within one file, and mixing the two key spaces would let an import
+   * suppress an asset edge or the reverse.
+   */
+  const assetEdgeKeys = new Map<string, Set<string>>();
   const assetNodes = new Map<string, GraphNode>();
   /** Module id -> absolute path, for resolving relative specifiers. */
   const modulePaths = new Map<string, string>();
@@ -205,7 +220,16 @@ export function extractJsProject(
         continue;
       }
 
-      if (!edges.some((e) => e.from === file.relativePath && e.to === assetId)) {
+      // Outer key is `from`, inner is `to`. A nested map rather than a joined
+      // string key, because no separator can be proved collision-free here and
+      // a collision would silently drop a real edge.
+      let seenAssetsFromThisFile = assetEdgeKeys.get(file.relativePath);
+      if (seenAssetsFromThisFile === undefined) {
+        seenAssetsFromThisFile = new Set<string>();
+        assetEdgeKeys.set(file.relativePath, seenAssetsFromThisFile);
+      }
+      if (!seenAssetsFromThisFile.has(assetId)) {
+        seenAssetsFromThisFile.add(assetId);
         edges.push({ from: file.relativePath, to: assetId, kind: 'asset_ref' });
       }
       dependsOn.push(assetId);

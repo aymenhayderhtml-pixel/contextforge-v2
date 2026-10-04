@@ -53,10 +53,21 @@ export function focusNeighbourhood(
   const distance = new Map<string, number>([[focusId, 0]]);
   // A plain FIFO queue: breadth-first, so the first time a node is reached it
   // has been reached by the shortest path and never needs revisiting.
+  //
+  // Dequeued by an INDEX, not by `shift()`. `Array.prototype.shift` memmoves
+  // every remaining element on each call, so a queue that grows wide — every
+  // dependent of a hub file — pays O(width) per dequeue and the whole walk goes
+  // quadratic. The audit measured 1360 ms for `findOrphans` on a 60,000-node
+  // star against 23 ms for a deep chain of the same node count: a chain keeps
+  // the queue at depth 1 and pays nothing, a star enqueues everything at once.
+  // An index pointer over the same array is O(1) per dequeue and yields the
+  // identical visit order, because push still appends and read-at-head still
+  // dequeues (D53).
   const queue: string[] = [focusId];
+  let head = 0;
 
-  while (queue.length > 0) {
-    const current = queue.shift();
+  while (head < queue.length) {
+    const current = queue[head++];
     if (current === undefined) continue;
     const here = distance.get(current);
     if (here === undefined) continue;
@@ -216,8 +227,12 @@ export function findOrphans(graph: DependencyGraph): Orphan[] {
     queue.push(node.id);
   }
 
-  while (queue.length > 0) {
-    const current = queue.shift();
+  // Index pointer, not `shift()` — see `focusNeighbourhood`. This sweep is the
+  // one that actually gets wide: every root in the project is seeded at once, so
+  // `shift()` here memmoved the whole seed list on each dequeue (D53).
+  let head = 0;
+  while (head < queue.length) {
+    const current = queue[head++];
     if (current === undefined) continue;
     for (const target of dependenciesByNode.get(current) ?? []) {
       if (reached.has(target)) continue;

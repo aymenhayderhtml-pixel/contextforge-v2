@@ -121,13 +121,49 @@ export function findCycles(graph: DependencyGraph): DependencyCycle[] {
   const path: string[] = [];
   const onPath = new Set<string>();
 
-  const visit = (id: string): void => {
-    if (done.has(id)) return;
-    path.push(id);
-    onPath.add(id);
+  /**
+   * One explicit stack frame per level of recursion.
+   *
+   * This used to be a recursive `visit`, which meant the JS call stack WAS the
+   * path stack: a 5,000-node cycle chain threw `RangeError: Maximum call stack
+   * size exceeded` while 2,000 was fine, and `layerNodes` calls `findCycles`, so
+   * it inherited the crash. SPEC R9 wants a loud refusal, not a stack overflow
+   * (D53).
+   *
+   * The frame carries the node's dependencies and how far through them the walk
+   * is, so the loop resumes exactly where the recursive call would have. Visit
+   * order is therefore IDENTICAL to the recursive version — same depth-first,
+   * same left-to-right within a node, same `path` contents when a back edge is
+   * found — which is what keeps the emitted `nodes` arrays byte-identical.
+   */
+  interface Frame {
+    id: string;
+    deps: readonly string[];
+    index: number;
+  }
 
-    const node = byId.get(id);
-    for (const dep of node?.depends_on ?? []) {
+  for (const node of graph.nodes) {
+    if (done.has(node.id)) continue;
+
+    path.push(node.id);
+    onPath.add(node.id);
+    const stack: Frame[] = [{ id: node.id, deps: byId.get(node.id)?.depends_on ?? [], index: 0 }];
+
+    while (stack.length > 0) {
+      const frame = stack[stack.length - 1];
+      if (frame === undefined) break;
+
+      if (frame.index >= frame.deps.length) {
+        // This node's dependencies are exhausted: pop it, exactly as the
+        // recursive version did on return.
+        stack.pop();
+        path.pop();
+        onPath.delete(frame.id);
+        done.add(frame.id);
+        continue;
+      }
+
+      const dep = frame.deps[frame.index++] as string;
       if (onPath.has(dep)) {
         const start = path.indexOf(dep);
         const cycle = path.slice(start);
@@ -137,16 +173,13 @@ export function findCycles(graph: DependencyGraph): DependencyCycle[] {
           cycles.push({ nodes: cycle });
         }
       } else if (!done.has(dep)) {
-        visit(dep);
+        path.push(dep);
+        onPath.add(dep);
+        stack.push({ id: dep, deps: byId.get(dep)?.depends_on ?? [], index: 0 });
       }
     }
+  }
 
-    path.pop();
-    onPath.delete(id);
-    done.add(id);
-  };
-
-  for (const node of graph.nodes) visit(node.id);
   return cycles;
 }
 
