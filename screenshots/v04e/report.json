@@ -3,92 +3,92 @@
   "screenshots": [
     {
       "name": "00-problems-panel.png",
-      "path": "<local-path>/contextforge 2/screenshots/v04e/00-problems-panel.png",
+      "path": "<your-projects-folder>/contextforge-v2/screenshots/v04e/00-problems-panel.png",
       "bytes": 331142
     },
     {
       "name": "00b-inspector-rotation-fields.png",
-      "path": "<local-path>/contextforge 2/screenshots/v04e/00b-inspector-rotation-fields.png",
+      "path": "<your-projects-folder>/contextforge-v2/screenshots/v04e/00b-inspector-rotation-fields.png",
       "bytes": 368975
     },
     {
       "name": "00-toasts-demo.png",
-      "path": "<local-path>/contextforge 2/screenshots/v04e/00-toasts-demo.png",
+      "path": "<your-projects-folder>/contextforge-v2/screenshots/v04e/00-toasts-demo.png",
       "bytes": 388872
     },
     {
       "name": "00-toasts-details-expanded.png",
-      "path": "<local-path>/contextforge 2/screenshots/v04e/00-toasts-details-expanded.png",
+      "path": "<your-projects-folder>/contextforge-v2/screenshots/v04e/00-toasts-details-expanded.png",
       "bytes": 407369
     },
     {
       "name": "01-context-collapsible-panels.png",
-      "path": "<local-path>/contextforge 2/screenshots/v04e/01-context-collapsible-panels.png",
+      "path": "<your-projects-folder>/contextforge-v2/screenshots/v04e/01-context-collapsible-panels.png",
       "bytes": 128461
     },
     {
       "name": "01b-context-panel-collapsed.png",
-      "path": "<local-path>/contextforge 2/screenshots/v04e/01b-context-panel-collapsed.png",
+      "path": "<your-projects-folder>/contextforge-v2/screenshots/v04e/01b-context-panel-collapsed.png",
       "bytes": 133630
     },
     {
       "name": "02-context-compiled.png",
-      "path": "<local-path>/contextforge 2/screenshots/v04e/02-context-compiled.png",
+      "path": "<your-projects-folder>/contextforge-v2/screenshots/v04e/02-context-compiled.png",
       "bytes": 180172
     },
     {
       "name": "02b-context-ranked-and-tokens.png",
-      "path": "<local-path>/contextforge 2/screenshots/v04e/02b-context-ranked-and-tokens.png",
+      "path": "<your-projects-folder>/contextforge-v2/screenshots/v04e/02b-context-ranked-and-tokens.png",
       "bytes": 234139
     },
     {
       "name": "02c-context-sticky-copy-bar.png",
-      "path": "<local-path>/contextforge 2/screenshots/v04e/02c-context-sticky-copy-bar.png",
+      "path": "<your-projects-folder>/contextforge-v2/screenshots/v04e/02c-context-sticky-copy-bar.png",
       "bytes": 174228
     },
     {
       "name": "03-context-insufficient-file.png",
-      "path": "<local-path>/contextforge 2/screenshots/v04e/03-context-insufficient-file.png",
+      "path": "<your-projects-folder>/contextforge-v2/screenshots/v04e/03-context-insufficient-file.png",
       "bytes": 180196
     },
     {
       "name": "03b-context-insufficient-detail.png",
-      "path": "<local-path>/contextforge 2/screenshots/v04e/03b-context-insufficient-detail.png",
+      "path": "<your-projects-folder>/contextforge-v2/screenshots/v04e/03b-context-insufficient-detail.png",
       "bytes": 157825
     },
     {
       "name": "04-patch-resting.png",
-      "path": "<local-path>/contextforge 2/screenshots/v04e/04-patch-resting.png",
+      "path": "<your-projects-folder>/contextforge-v2/screenshots/v04e/04-patch-resting.png",
       "bytes": 116477
     },
     {
       "name": "05-patch-error-missing-anchor.png",
-      "path": "<local-path>/contextforge 2/screenshots/v04e/05-patch-error-missing-anchor.png",
+      "path": "<your-projects-folder>/contextforge-v2/screenshots/v04e/05-patch-error-missing-anchor.png",
       "bytes": 136471
     },
     {
       "name": "05b-patch-error-reason.png",
-      "path": "<local-path>/contextforge 2/screenshots/v04e/05b-patch-error-reason.png",
+      "path": "<your-projects-folder>/contextforge-v2/screenshots/v04e/05b-patch-error-reason.png",
       "bytes": 114330
     },
     {
       "name": "06-patch-error-syntax.png",
-      "path": "<local-path>/contextforge 2/screenshots/v04e/06-patch-error-syntax.png",
+      "path": "<your-projects-folder>/contextforge-v2/screenshots/v04e/06-patch-error-syntax.png",
       "bytes": 128123
     },
     {
       "name": "06b-patch-syntax-reason.png",
-      "path": "<local-path>/contextforge 2/screenshots/v04e/06b-patch-syntax-reason.png",
+      "path": "<your-projects-folder>/contextforge-v2/screenshots/v04e/06b-patch-syntax-reason.png",
       "bytes": 106621
     },
     {
       "name": "07-patch-preview-clean.png",
-      "path": "<local-path>/contextforge 2/screenshots/v04e/07-patch-preview-clean.png",
+      "path": "<your-projects-folder>/contextforge-v2/screenshots/v04e/07-patch-preview-clean.png",
       "bytes": 139303
     },
     {
       "name": "07b-patch-diff.png",
-      "path": "<local-path>/contextforge 2/screenshots/v04e/07b-patch-diff.png",
+      "path": "<your-projects-folder>/contextforge-v2/screenshots/v04e/07b-patch-diff.png",
       "bytes": 116807
     }
   ],

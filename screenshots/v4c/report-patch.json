@@ -4,57 +4,57 @@
   "screenshots": [
     {
       "name": "01-open-project.png",
-      "path": "<local-path>/contextforge 2/screenshots/v4c/01-open-project.png",
+      "path": "<your-projects-folder>/contextforge-v2/screenshots/v4c/01-open-project.png",
       "bytes": 116759
     },
     {
       "name": "02-single-patch-preview.png",
-      "path": "<local-path>/contextforge 2/screenshots/v4c/02-single-patch-preview.png",
+      "path": "<your-projects-folder>/contextforge-v2/screenshots/v4c/02-single-patch-preview.png",
       "bytes": 141905
     },
     {
       "name": "03-single-patch-applied.png",
-      "path": "<local-path>/contextforge 2/screenshots/v4c/03-single-patch-applied.png",
+      "path": "<your-projects-folder>/contextforge-v2/screenshots/v4c/03-single-patch-applied.png",
       "bytes": 137730
     },
     {
       "name": "04-single-patch-undone.png",
-      "path": "<local-path>/contextforge 2/screenshots/v4c/04-single-patch-undone.png",
+      "path": "<your-projects-folder>/contextforge-v2/screenshots/v4c/04-single-patch-undone.png",
       "bytes": 137787
     },
     {
       "name": "05-single-patch-redone.png",
-      "path": "<local-path>/contextforge 2/screenshots/v4c/05-single-patch-redone.png",
+      "path": "<your-projects-folder>/contextforge-v2/screenshots/v4c/05-single-patch-redone.png",
       "bytes": 137730
     },
     {
       "name": "06-single-patch-reset.png",
-      "path": "<local-path>/contextforge 2/screenshots/v4c/06-single-patch-reset.png",
+      "path": "<your-projects-folder>/contextforge-v2/screenshots/v4c/06-single-patch-reset.png",
       "bytes": 137787
     },
     {
       "name": "07-two-file-patch-preview.png",
-      "path": "<local-path>/contextforge 2/screenshots/v4c/07-two-file-patch-preview.png",
+      "path": "<your-projects-folder>/contextforge-v2/screenshots/v4c/07-two-file-patch-preview.png",
       "bytes": 160677
     },
     {
       "name": "08-two-file-patch-applied.png",
-      "path": "<local-path>/contextforge 2/screenshots/v4c/08-two-file-patch-applied.png",
+      "path": "<your-projects-folder>/contextforge-v2/screenshots/v4c/08-two-file-patch-applied.png",
       "bytes": 158506
     },
     {
       "name": "09-two-file-patch-undone.png",
-      "path": "<local-path>/contextforge 2/screenshots/v4c/09-two-file-patch-undone.png",
+      "path": "<your-projects-folder>/contextforge-v2/screenshots/v4c/09-two-file-patch-undone.png",
       "bytes": 158491
     },
     {
       "name": "10-bad-block-patch-preview.png",
-      "path": "<local-path>/contextforge 2/screenshots/v4c/10-bad-block-patch-preview.png",
+      "path": "<your-projects-folder>/contextforge-v2/screenshots/v4c/10-bad-block-patch-preview.png",
       "bytes": 178199
     },
     {
       "name": "11-bad-block-nothing-written.png",
-      "path": "<local-path>/contextforge 2/screenshots/v4c/11-bad-block-nothing-written.png",
+      "path": "<your-projects-folder>/contextforge-v2/screenshots/v4c/11-bad-block-nothing-written.png",
       "bytes": 178199
     }
   ],

@@ -5,32 +5,32 @@
   "screenshots": [
     {
       "name": "01-context-resting.png",
-      "path": "<local-path>/contextforge 2/screenshots/v4b/01-context-resting.png",
+      "path": "<your-projects-folder>/contextforge-v2/screenshots/v4b/01-context-resting.png",
       "bytes": 233328
     },
     {
       "name": "02-brief-oneshot-task.png",
-      "path": "<local-path>/contextforge 2/screenshots/v4b/02-brief-oneshot-task.png",
+      "path": "<your-projects-folder>/contextforge-v2/screenshots/v4b/02-brief-oneshot-task.png",
       "bytes": 151155
     },
     {
       "name": "03-brief-oneshot-built.png",
-      "path": "<local-path>/contextforge 2/screenshots/v4b/03-brief-oneshot-built.png",
+      "path": "<your-projects-folder>/contextforge-v2/screenshots/v4b/03-brief-oneshot-built.png",
       "bytes": 226785
     },
     {
       "name": "04-brief-interactive-built.png",
-      "path": "<local-path>/contextforge 2/screenshots/v4b/04-brief-interactive-built.png",
+      "path": "<your-projects-folder>/contextforge-v2/screenshots/v4b/04-brief-interactive-built.png",
       "bytes": 258709
     },
     {
       "name": "05-reply-need-detected.png",
-      "path": "<local-path>/contextforge 2/screenshots/v4b/05-reply-need-detected.png",
+      "path": "<your-projects-folder>/contextforge-v2/screenshots/v4b/05-reply-need-detected.png",
       "bytes": 165390
     },
     {
       "name": "06-reply-file-attached.png",
-      "path": "<local-path>/contextforge 2/screenshots/v4b/06-reply-file-attached.png",
+      "path": "<your-projects-folder>/contextforge-v2/screenshots/v4b/06-reply-file-attached.png",
       "bytes": 194527
     }
   ],

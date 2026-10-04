@@ -14,7 +14,7 @@
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import type {
   DependencyGraph,
@@ -69,8 +69,18 @@ function sampleProject(): string {
   return dir;
 }
 
-/** The real test project, when it is on disk. */
-const KART_ROOT = process.env['CF_PROJECT'] ?? '/home/aymen/Documents/dark matter/kart-dash-3d-v2';
+/**
+ * The real test project, when it is on disk.
+ *
+ * Resolved by walking up to the parent folder and looking for it by name, which
+ * is the convention the other suites that need this project already use (see
+ * `realPrefabs.test.ts:70`). A literal absolute path would both embed one
+ * machine's directory layout in the source and break on every other machine;
+ * `CF_PROJECT` still overrides it for anyone whose layout differs.
+ */
+const KART_ROOT =
+  process.env['CF_PROJECT'] ??
+  resolve(import.meta.dirname, '..', '..', '..', '..', '..', 'kart-dash-3d-v2');
 const kartPresent = existsSync(join(KART_ROOT, 'package.json'));
 
 describe('projectGraph', () => {

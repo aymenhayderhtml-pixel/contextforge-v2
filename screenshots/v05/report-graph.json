@@ -1,5 +1,5 @@
 {
-  "project": "/home/aymen/Documents/dark matter/kart-dash-3d-v2",
+  "project": "<your-projects-folder>/kart-dash-3d-v2",
   "fullGraph": "37 files · 46 edges · 4 unreferenced",
   "focusedNode": "src/browserSceneLoader.js",
   "nodesAtDepth1": 5,
@@ -13,27 +13,27 @@
   "screenshots": [
     {
       "name": "graph-01-full.png",
-      "path": "/home/aymen/Documents/dark matter/contextforge 2/screenshots/v05/graph-01-full.png",
+      "path": "<your-projects-folder>/contextforge-v2/screenshots/v05/graph-01-full.png",
       "bytes": 295345
     },
     {
       "name": "graph-02-focus-depth1.png",
-      "path": "/home/aymen/Documents/dark matter/contextforge 2/screenshots/v05/graph-02-focus-depth1.png",
+      "path": "<your-projects-folder>/contextforge-v2/screenshots/v05/graph-02-focus-depth1.png",
       "bytes": 127869
     },
     {
       "name": "graph-03-focus-depth2.png",
-      "path": "/home/aymen/Documents/dark matter/contextforge 2/screenshots/v05/graph-03-focus-depth2.png",
+      "path": "<your-projects-folder>/contextforge-v2/screenshots/v05/graph-03-focus-depth2.png",
       "bytes": 259547
     },
     {
       "name": "graph-04-unreferenced-drawer.png",
-      "path": "/home/aymen/Documents/dark matter/contextforge 2/screenshots/v05/graph-04-unreferenced-drawer.png",
+      "path": "<your-projects-folder>/contextforge-v2/screenshots/v05/graph-04-unreferenced-drawer.png",
       "bytes": 425101
     },
     {
       "name": "graph-05-attach-to-context.png",
-      "path": "/home/aymen/Documents/dark matter/contextforge 2/screenshots/v05/graph-05-attach-to-context.png",
+      "path": "<your-projects-folder>/contextforge-v2/screenshots/v05/graph-05-attach-to-context.png",
       "bytes": 442898
     }
   ],

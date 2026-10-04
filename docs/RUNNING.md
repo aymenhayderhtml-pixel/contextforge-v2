@@ -32,7 +32,7 @@ npm --version
 ## Install
 
 ```bash
-cd "/home/aymen/Documents/dark matter/contextforge 2"
+cd "<your-projects-folder>/contextforge-v2"
 npm ci
 ```
 
@@ -176,7 +176,7 @@ Five stages, in order:
 **Result: exit 0, ~52 s.**
 
 `check:three` has a **hardcoded default** game path
-(`/home/aymen/Documents/dark matter/kart-dash-3d-v2`). Override it:
+(`<your-projects-folder>/kart-dash-3d-v2`). Override it:
 
 ```bash
 CF_GAME_ROOT="/path/to/your/game" npm run check:three
@@ -189,7 +189,7 @@ CF_GAME_ROOT="/path/to/your/game" npm run check:three
 The test project lives outside this repo:
 
 ```
-/home/aymen/Documents/dark matter/kart-dash-3d-v2
+<your-projects-folder>/kart-dash-3d-v2
 ```
 
 37 source files, 46 import edges, 4 unreferenced. It deliberately contains two

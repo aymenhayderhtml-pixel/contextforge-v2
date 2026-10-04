@@ -140,7 +140,7 @@ function and a command-line entry point, so automation can drive the app.
 ## 3. Folder layout
 
 ```
-contextforge 2/
+contextforge-v2/
 ├── SPEC.md                       this document
 ├── package.json                  npm workspaces root, scripts
 ├── tsconfig.base.json            shared strict compiler options

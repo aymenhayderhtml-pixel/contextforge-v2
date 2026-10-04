@@ -514,19 +514,62 @@ a real project.
 
 Nothing beyond Step 5f is committed to.
 
-### Known limits, stated plainly
+### Known gaps
 
-- **Attach to context** records which files you ticked; it does not yet put them
-  into a compiled prompt.
-- **New Project** produces a prompt, not a folder.
-- **`findCycles` is super-linear** — 33× for a 10× input, because each detected
-  cycle is canonicalised by sorting its node list. 11 ms at 1,000 files. Logged
-  in [D47](docs/DECISIONS.md), not fixed.
-- **The clipboard write is untested.** There is no jsdom in this repo, so the
-  copy buttons are covered at the level of "is it enabled", not "did the bytes
-  land".
-- The Electron e2e loops are skipped by default and say so in their output
-  rather than passing silently.
+Four things this project does not do yet. Each is stated here rather than
+discovered later.
+
+**1. The clipboard copy is untested.** Every "Copy" button calls
+`navigator.clipboard.writeText`, and **no test asserts that the bytes land.** This
+repo has no jsdom and no mounted-DOM harness, so the buttons are covered at the
+level of *"is it enabled"* and *"does clicking it not throw"* — never *"did the
+clipboard receive the prompt"*. The two pre-existing copy buttons on the Context
+screen have no test either. If you are relying on a copy button, paste the result
+somewhere and check it.
+
+**2. The test game reports 4 unreferenced files.** In
+`kart-dash-3d-v2`, the Graph screen's drawer lists four files nothing imports:
+
+| File | Why core flags it | Is it live? |
+| --- | --- | --- |
+| `index.html` | `entry point` — it loads `src/main.js` via a `<script>` tag, so it has a real dependency. Nothing imports an HTML file. | **Yes.** Vite finds it by convention. |
+| `capture-game.mjs` | `entry point` — only because the screenshot filenames in its source parse as asset references. Delete those strings and the label would change. | **Yes** — it drives the game. It is not runnable from the game project though: it imports `electron`, which is not one of its dependencies. |
+| `src/browser-node-builtins.js` | `unreferenced` — Core discards every `node:` specifier, and a Vite plugin redirects `node:fs`/`node:path` to this file at resolve time. No source imports it, so no edge can exist. | **Yes, load-bearing.** Delete it and `vite build` breaks — `cf-core.js` reaches core through it. |
+| `vite.config.js` | `unreferenced` — loaded by the build tool, not by the game. | **Yes.** |
+
+**None of the four should be deleted.** The two labelled `unreferenced` are live
+and load-bearing, which is worth stating outright: `unreferenced` is the same
+label Core gives a genuinely dead file, so a reader skimming the drawer rather
+than this README would reasonably mistake those two rows for deletion candidates.
+
+The classifier itself keys on whether a file has **any** resolved dependency, not
+on whether it is an entry point. `index.html` and `capture-game.mjs` both have
+non-empty `depends_on`; a CLI importing only `node:fs` would be labelled plain
+`unreferenced` despite being an entry point.
+
+> **A caveat on the graph itself.** Eight of this project's 37 nodes are the PNG
+> filenames in `capture-game.mjs`, and those PNGs live in this repository's
+> `screenshots/`, not in the game — Core builds an asset node for every asset
+> reference without checking that the file exists. So they appear in the graph as
+> real files and are not flagged as orphans, because something does reference
+> them. Known, and left as-is rather than fixed here.
+
+**3. Attach to context records a selection; it does not use it.** Ticking a row in
+the unreferenced drawer highlights it and reports *"N file(s) attached"*. It does
+**not** yet put those files into a compiled prompt.
+
+**4. New Project produces a prompt, not a folder.** The three steps end at a
+copyable prompt. The folder is never created, because a native create-folder
+dialog would need new main-process wiring that breaks the isolation
+`pickFolder.test.ts` enforces.
+
+Also worth knowing: **`findCycles` is super-linear** — 33× for a 10× input, since
+each cycle is canonicalised by sorting its node list. 11 ms at 1,000 files, so
+this is a complexity note rather than an active problem. Logged in
+[D47](docs/DECISIONS.md), not fixed.
+
+The Electron e2e loops are skipped by default and **say so in their output**
+rather than passing silently.
 
 Step boundaries and their done-when tests: [SPEC.md §5](SPEC.md). The reasons
 behind each choice, including the gaps accepted on purpose, are in
