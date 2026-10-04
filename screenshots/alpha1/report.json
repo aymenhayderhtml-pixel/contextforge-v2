@@ -1,0 +1,50 @@
+{
+  "screenshots": [
+    {
+      "name": "11-project-screen-helpline.png",
+      "bytes": 135285
+    },
+    {
+      "name": "01-step1-default-folder.png",
+      "bytes": 158914
+    },
+    {
+      "name": "02-step2-empty.png",
+      "bytes": 163388
+    },
+    {
+      "name": "03-step3-prompt.png",
+      "bytes": 198897
+    },
+    {
+      "name": "04-step4-good-reply.png",
+      "bytes": 160821
+    },
+    {
+      "name": "05-step4-bad-block.png",
+      "bytes": 174634
+    },
+    {
+      "name": "06-step4-existing-folder.png",
+      "bytes": 162352
+    },
+    {
+      "name": "07-step5-before-install.png",
+      "bytes": 168388
+    },
+    {
+      "name": "08-install-running.png",
+      "bytes": 165659
+    },
+    {
+      "name": "09-install-failed.png",
+      "bytes": 164712
+    },
+    {
+      "name": "10-run-game-running.png",
+      "bytes": 168187
+    }
+  ],
+  "consoleErrors": [],
+  "timestamp": "2026-10-04T14:37:09.884Z"
+}
