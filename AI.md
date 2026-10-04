@@ -1,7 +1,6 @@
 # AI.md — project memory for AI agents
 
-**Read this file first.** Then open only the files it points to. Do not read the
-whole project to answer a question this file can answer.
+**Read this file first.** Then open only the files it points to — not the whole project.
 
 **Update this file in the same commit as any task that changes what it says** — see
 the protocol at the end. Verify every claim against the code: a line here that is not
@@ -18,8 +17,7 @@ A local Electron desktop app for managing AI context on game projects. It reads 
 
 ## Commands
 
-Tested on Ubuntu 24.04 / Node 22. `npm run verify` is the gate — it must be green
-before you commit anything.
+Tested on Ubuntu 24.04 / Node 22. `npm run verify` is the gate — green before you commit.
 
 ```bash
 npm ci                                    # install (exit 0; no --legacy-peer-deps needed)
@@ -32,18 +30,19 @@ npm run build:ui -w @contextforge/app     # vite build the renderer bundle
 npm run check:boundaries                  # import-direction checker
 npm run lint:prefabs                      # scene/prefab lint; needs core built first
 npm run dist:appimage                     # build the installable AppImage into dist/
+npm run smoke:package                      # load kart prefabs from the BUILT AppImage (needs one)
 npx electron --no-sandbox packages/app/dist/electron/main.js   # RUN the app
 ```
 
 The AppImage cannot mount itself on a machine without `libfuse2`, so run it as
-`./ContextForge-*.AppImage --appimage-extract-and-run --no-sandbox` (D55).
+`./ContextForge-*.AppImage --appimage-extract-and-run --no-sandbox` (D55). The
+installed launcher does that for you when `libfuse.so.2` is missing.
 
-**`npm run start` is known-broken on this machine** — it omits `--no-sandbox`.
-Use the `npx electron` line above.
+**`npm run start` is known-broken here** — it omits `--no-sandbox`; use the `npx electron` line above.
 
-Screenshot harnesses (not npm scripts; each exits non-zero and throws rather than
-photograph a state it cannot confirm — D43). `capture-v4.mjs` is the reference
-pattern. `capture-search.mjs` drives the real search box against a real project.
+Screenshot harnesses (not npm scripts; each exits non-zero rather than photograph a
+state it cannot confirm — D43). `capture-v4.mjs` is the reference pattern;
+`capture-search.mjs` drives the real search box against a real project.
 
 ```bash
 node packages/app/src/electron/capture-graph.mjs      # the Graph screen, 5 images
@@ -52,10 +51,9 @@ node packages/app/src/electron/capture-newproject.mjs
 node scripts/run-e2e-patch.mjs                        # restores the game afterwards
 ```
 
-`scripts/run-e2e-edit-loop.mjs` needs the game dev server running. Performance
-regressions: rebuild core with `npm run typecheck`, then run the repro script
-`scripts/repro-round-c.mjs` — a measurement harness, not a gate, so it does not exit
-non-zero on a slow result.
+`scripts/run-e2e-edit-loop.mjs` needs the game dev server running. For performance,
+rebuild core with `npm run typecheck` then run `scripts/repro-round-c.mjs` — a
+measurement harness, not a gate, so a slow result does not exit non-zero.
 
 ---
 
@@ -124,9 +122,9 @@ docs/                   DECISIONS.md (D1-D55), RUNNING.md, ARCHITECTURE.md,
                          OVERNIGHT.md, DEPENDENCIES.md, PUSH.md, images/
 ```
 
-There are **five** screens, not six. "New Project" is `ProjectScreen.svelte`.
-"Project Brief" has **no screen of its own** — it is a panel inside
-`ContextScreen.svelte`.
+There are **five** screens, not six. "New Project" is `ProjectScreen.svelte`; "Project
+Brief" has **no screen of its own** — a panel inside `ContextScreen.svelte`. All are
+gated on an open project except **Project** itself (`Sidebar.svelte` `isScreenDisabled`).
 
 ---
 
@@ -143,8 +141,7 @@ There are **five** screens, not six. "New Project" is `ProjectScreen.svelte`.
 | **Brief** | *(panel in `ContextScreen.svelte`)* | `packages/core/src/context/brief.ts` | `brief:generate` `brief:read` | `core/test/context/brief.test.ts`, `app/test/e2e/briefLoop.test.ts` |
 
 There is an **AppImage** (`npm run dist:appimage`) and a `.desktop` launcher
-(`scripts/install-launcher.sh`). Packaging has its own row of failure modes — see
-gotchas 21 and 22 and D55.
+(`scripts/install-launcher.sh`). Packaging has its own failure modes — gotchas 21, 22, D55.
 
 Push events, main to renderer, not in `CHANNELS`:
 `scene:changedOnDisk`, `prefabs:changed`, `app:notice`.
@@ -183,13 +180,15 @@ Push events, main to renderer, not in `CHANNELS`:
 | The packaged app starts, then dies with `ERR_MODULE_NOT_FOUND` | `package.json` `build.files` — it must list `dist/ipc.js` (tsc emits it *beside* `dist/electron/`, not inside) and `node-gyp-build` (a runtime dep of all four tree-sitter packages). The build succeeds either way; only the asar tells you (D55) |
 | An AppImage builds but ships no dependencies | `package.json` `build.directories.app` — without `packages/app` the root manifest is read, and it declares none (D55) |
 | `Cannot find module` for `dist/ipc.js` when running `dist/electron/` alone | Not a build error. `main.js` imports the sibling `ipc.js` one level above `dist/electron/`. Copy both, or package it (D55) |
-| The packaged app logs `Cannot find package 'esbuild'` | `esbuild` is imported at load time by `prefabLoader.js`, so it is a RUNTIME dep — it belongs in `dependencies` AND in `build.files`, with `@esbuild/linux-x64` (D55) |
+| The packaged app logs `Cannot find package 'esbuild'` | `esbuild` is imported by `prefabLoader.js` at runtime (lazily, on first bundle), so it is a RUNTIME dep — it belongs in `dependencies` AND in `build.files`, with `@esbuild/linux-x64` (D55) |
+| **Every** prefab shows `prefab failed` in the packaged app, but only the fixture fails in dev | `prefabLoader.ts` `ensureEsbuildBinaryIsExecutable`. The exact error is `spawn ENOTDIR`: esbuild `spawn`s a binary whose resolved path is *inside* `app.asar`, and Electron patches `fs` for asar but not `child_process` (gotcha 24). One shared failure, surfaced once per prefab. Check with `npm run smoke:package` |
+| The launcher installs but the app will not start | Without `libfuse.so.2` an AppImage cannot mount itself. The wrapper now detects this and adds `--appimage-extract-and-run`; a wrapper that only `exec`s the file is the bug (D55) |
 
 ---
 
 ## Gotchas learned the hard way
 
-1. **The renderer may only `import type` from `@contextforge/core`.** Core is `external` in `app/vite.config.ts:78` (it imports `node:fs`, `node:path`, tree-sitter — none exist in the renderer sandbox). A *value* import compiles then fails at runtime; it crashed the whole app once. Precedent for a needed runtime function is a **mirror** with a test comparing both copies: `packages/app/src/renderer/viewport/rng.ts`, `packages/app/src/renderer/graph/labels.ts`.
+1. **The renderer may only `import type` from `@contextforge/core`.** Core is `external` in `app/vite.config.ts:78` (it imports `node:fs`, tree-sitter — none exist in the renderer sandbox). A *value* import compiles then fails at runtime; it crashed the whole app once. Precedent for a needed runtime function is a **mirror** with a test comparing both copies: `packages/app/src/renderer/viewport/rng.ts`, `packages/app/src/renderer/graph/labels.ts`.
 2. **`$state.snapshot` before anything crosses IPC.** A `$state` value is a Svelte proxy and `ipcRenderer.invoke` structured-clones its argument, which cannot clone a proxy. See `GraphScreen.svelte`.
 3. **`npm run typecheck` IS the core build** (`tsc --build` emits `core/dist`). Targeted `vitest run <file>` does **not** build first, so a test importing `@contextforge/core` can run against **stale dist** and report phantom drift. Run `typecheck` after editing core before any subset run; `lint:prefabs` and `run-e2e-*` refuse to run without it.
 4. **Cytoscape attribute-selector values must be quoted** — `node[focus = true]` is rejected by its selector parser and left the canvas empty. Use `node[focus = "true"]` and stringify the data to match. `app/test/shell/screenRegressions.test.ts` scans for this.
@@ -208,19 +207,20 @@ Push events, main to renderer, not in `CHANNELS`:
 17. **A performance test asserting a time RATIO can pass on the bug it was written for** (D53). Best-of-3 removes precisely the super-linear term a ratio needs to detect. Use an **absolute bound on a large input**, set by measuring the unfixed code, and confirm the test fails when the source is reverted.
 18. **Refuse, do not truncate.** A partial artefact with no marker is worse than a missing one, because the consumer cannot tell (D53). A diff over `MAX_DIFF_LINES` throws; a file over `MAX_FULL_FILE_CHARS` becomes a gap; an over-budget prompt drops whole files. In all three the absence is stated.
 19. **An empty diff is ambiguous** — "unchanged" to `PatchScreen.svelte` and "too large to preview" to the developer. See `PatchPreview.diffNotShown`: a separate field, not an addition to `blockedReason` (D53).
-20. **`packages/app/tsconfig.json` excludes `src/renderer`, so `tsc` cannot import a renderer file** (D54). Main builds under `tsc`; the renderer's TypeScript is checked by `svelte-check` under `tsconfig.svelte.json`. A `tsc`-compiled file importing anything under `src/renderer/` fails with `TS6307 — not listed within the file list`, and no main↔renderer module import exists anywhere in `src/electron/`. Shared **shape** goes through `ipc.ts` types; shared **logic** is duplicated with a mirror test; or the logic lives on the side needing `node:`. This is why search's matching algorithm is in `ipcHandlers.ts` and only its display rules are in `packages/app/src/renderer/search/match.ts`.
+20. **`packages/app/tsconfig.json` excludes `src/renderer`, so `tsc` cannot import a renderer file** (D54). Main builds under `tsc`; the renderer's TypeScript is checked by `svelte-check`. A `tsc`-compiled file importing anything under `src/renderer/` fails `TS6307 — not listed within the file list`. Shared **shape** goes through `ipc.ts` types; shared **logic** is duplicated with a mirror test; or the logic lives on the side needing `node:`. This is why search's matching algorithm is in `ipcHandlers.ts` and only its display rules are in `packages/app/src/renderer/search/match.ts`.
 21. **A packaging omission produces a build that SUCCEEDS and a package that fails at runtime** (D55). `directories.app`, `extraMetadata`, and the `files` allowlist each have a default that is wrong here, and the only warning printed is `no node modules returned while searching directories`, which reads as harmless in a wall of progress lines. **Check the asar, not the exit code.**
-22. **A `.desktop` `Exec` must not name a path containing a space.** This repo's path is `dark matter`, and `desktop-file-validate` does **not** check for it — an unquoted `Exec` validates and then runs the wrong command. The launcher uses `Exec=contextforge` plus a `~/.local/bin/contextforge` wrapper that `exec`s the real path (D55).
-23. **`dist/` is both `tsc`'s output root and the packaging output directory.** They do not clobber each other, but `rm -rf dist` to "clean the build" **deletes your AppImage**. Also: `--appimage-extract` writes `squashfs-root/` into the repo root, and node-gyp's "Attempting to build a module with a space in the path" during the build is **noise** — the grammars ship prebuilds and the rebuild falls back to them (D55).
+22. **A `.desktop` `Exec` must not name a path containing a space.** This repo's path is `dark matter`, and `desktop-file-validate` does **not** check for it — an unquoted `Exec` validates and then runs the wrong command. The launcher uses `Exec=contextforge` plus a `~/.local/bin/contextforge` wrapper (D55).
+23. **`dist/` is both `tsc`'s output root and the packaging output directory.** `rm -rf dist` to "clean the build" **deletes your AppImage**. Also: `--appimage-extract` writes `squashfs-root/` into the repo root, and node-gyp's "Attempting to build a module with a space in the path" is **noise** — the grammars ship prebuilds (D55).
+24. **Electron patches `fs` for asar, and nothing else.** `child_process` and the *synchronous* `createRequire` both hand `spawn`/resolution a path that is not a file on disk, so anything that spawns a binary or resolves synchronously from inside `app.asar` fails `ENOTDIR`. Only async ESM `import` is patched. Fix: `unpackedAsarPath` + `ESBUILD_BINARY_PATH` (D55) — but esbuild reads that variable **once, when its module is evaluated** (a module-scope constant `generateBinPath()` reads, not the live env), so esbuild must be imported *after* the override. A static `import` is hoisted and captures it too early; hence the dynamic `await import('esbuild')` after each guard.
+
 ---
 
 ## Decisions index
 
 Full reasoning in `docs/DECISIONS.md`.
 
-**D17, D18 and D19 were never written.** They were cited by live code
-(`package.json:14`, `ipc.ts:806`, `backend.test.ts:267`) before the log existed, and
-no commit, branch, stash or dangling blob contains them. They have since been
+**D17, D18 and D19 were never written.** They were cited by live code before the log
+existed, and no commit, branch or dangling blob contains them. They have been
 **reconstructed from the code that cites them**, and each entry says so.
 
 | | | | |
@@ -244,8 +244,7 @@ no commit, branch, stash or dangling blob contains them. They have since been
 
 ## Known gaps and open bugs
 
-- **D31:** a line number in the trace skips the symbol check. Open.
-- **Clipboard copy is untested**.
+- **D31:** a line number in the trace skips the symbol check. Open. **Clipboard copy is untested**.
 - **Two `svelte-check` warnings remain, deliberately unsuppressed (D50)**:
   `a11y_no_noninteractive_tabindex` on the panel resizers in `SceneScreen.svelte`.
   They are `<div role="separator">` with `aria-valuenow`, and the `tabindex` is what
@@ -254,18 +253,15 @@ no commit, branch, stash or dangling blob contains them. They have since been
 - **A prompt cannot be smaller than ~1,900 characters (D53)** — the opening line, the
   `SURGICAL PATCH CONTRACT` and the `NOT ATTACHED` block. A lower `maxChars` is met by
   dropping requested files and then reported as unreachable, not silently exceeded. Do
-  not "fix" this by trimming the contract — a patch prompt without it produces patches
-  that do not apply. `maxChars: Infinity` waives the total budget but NOT
-  `MAX_FULL_FILE_CHARS`; one file is still refused above 400,000 characters.
+  not "fix" this by trimming the contract. `maxChars: Infinity` waives the total budget
+  but NOT `MAX_FULL_FILE_CHARS`; one file is still refused above 400,000 characters.
 - **`scanFiles` skips symlinked files and directories** — `entry.isFile()` and
   `entry.isDirectory()` are both false for a symlink (D54). A symlink inside a project
   is therefore not searchable by content *or* name, and `skipped` can be legitimately
   empty for a symlink case because the walk never offered the path. Search's
   `resolveInsideRoot` call is defence in depth, not the primary barrier.
-- **Search "jump" means the match is shown with its line number, highlighted** (D54).
-  It does not open the file in an OS editor or scroll the Scene screen to a line —
-  that would be a second IPC channel and is not built. The box mounts on all five
-  screens, but the harness only exercised it on the Project screen.
+- **Search "jump" shows the match with its line number, highlighted** (D54) — it does
+  not open the file elsewhere or scroll the Scene screen; that is not built.
 - **The AppImage is x86_64 Linux only**, unsigned, and cannot mount itself without
   `libfuse2` (D55). No `.deb`/flatpak/snap, no auto-update, no screenshot of a running
   window has ever been captured on this machine.
@@ -273,15 +269,17 @@ no commit, branch, stash or dangling blob contains them. They have since been
   (`packages/core` declares `^0.25.1`). Noted in D17, left unedited there.
 - **The `audit/2026-10` branch is a stale snapshot and its `AUDIT.md` is UNTRACKED** —
   never committed, so reading it from git fails. Find it in the `contextforge-audit`
-  worktree beside this repo, under its `docs` folder. **Several findings are wrong**:
-  three (D51) plus GRAPH-5's headline timing, which was really CTX-3 (D53). Read D51
-  and D53 first. Repro tests: `../contextforge-audit/packages/**/test/**/audit-*.test.ts`.
+  worktree beside this repo. **Several findings are wrong**: three (D51) plus GRAPH-5's
+  headline timing, which was really CTX-3 (D53). Read D51 and D53 first.
 - **Still-open audit findings** — PATCH-2/SEC-3 (symlinks defeating the lexical path
   checks), SEC-2 (`NEED:` reads), SEC-1 (`targetFile` unguarded in the handler),
   SCENE-1 (a root with children cannot be deleted), SEC-7 (`applyEdit` throws where its
   docstring promises a `Result`), SCENE-6 (escapable no-random lint). Round D.
 - **Graph labels assume left-to-right rows** and two fixed vertical lanes — true for
   `breadthfirst`; a third lane is not pre-built. Zoom does not re-measure label widths.
+- **A test that claims to exercise a packaged tree may not be doing so.** Electron patches
+  only async ESM `import` for asar; a plain `node`, or a synchronous `createRequire`,
+  fails `ENOTDIR` before reaching the code. Verify the assertion really ran (D55).
 
 ---
 

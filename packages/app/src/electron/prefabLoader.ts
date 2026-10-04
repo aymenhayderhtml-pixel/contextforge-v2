@@ -37,10 +37,11 @@
  *    caches ESM modules by URL forever, so a rebuild of an unchanged path would
  *    otherwise keep serving the *first* version. A per-import query suffix is
  *    what makes "reload" mean reload.
- *  - **esbuild's binary is re-pointed before any build.** esbuild `spawn`s a real
+ *  - **esbuild's binary is re-pointed before esbuild is loaded.** esbuild `spawn`s a real
  *    executable, which cannot happen at a path inside an asar. In the packaged app
  *    that is `spawn ENOTDIR` for *every* prefab at once. See
- *    `ensureEsbuildBinaryIsExecutable`.
+ *    `ensureEsbuildBinaryIsExecutable` — the override must be in place before esbuild's
+ *    module is *evaluated*, so `build` is imported dynamically rather than statically.
  *
  * ## A bad prefab is a row, not a crash
  *
@@ -65,7 +66,7 @@
  * first-class result, not an error.
  */
 
-import { build, type Plugin } from 'esbuild';
+import type { Plugin } from 'esbuild';
 import {
   existsSync,
   mkdtempSync,
@@ -506,9 +507,17 @@ export const EXTERNAL_SPECIFIERS = ['three', '@contextforge/core'] as const;
  * Why the environment variable rather than patching esbuild's internals: it is the
  * documented, stable override, it is read by `generateBinPath()` before esbuild's own
  * resolution runs, and it leaves a deliberate mark (`esbuildForcedBinaryPath`) that a
- * test can assert. Setting `process.env` is done *before* esbuild's first `build()`, and
- * esbuild re-reads the env var on every call, so this is a one-shot process-level
- * side effect rather than a per-call hack.
+ * test can assert.
+ *
+ * **The variable must be set before esbuild's module is evaluated, not merely before
+ * `build()` is called.** `esbuild/lib/main.js` reads it once at module scope
+ * (`var ESBUILD_BINARY_PATH = process.env.ESBUILD_BINARY_PATH || ...`), and
+ * `generateBinPath()` reads that *constant* — esbuild never re-reads `process.env`. A
+ * static `import { build } from 'esbuild'` is hoisted above every statement in this file,
+ * so it captures the unset value first and this function's later `process.env` write is
+ * ignored. That is why `build` is instead loaded with a dynamic `await import('esbuild')`
+ * *after* the guard at each call site (see `bundleEntry`). Setting the variable afterwards
+ * has no effect at all.
  *
  * Every failure path **falls back to doing nothing**, leaving esbuild's own resolution in
  * charge: if the path cannot be resolved, or the unpacked twin does not exist, or the
@@ -898,6 +907,13 @@ export async function bundleEntry(entryPoint: string, projectRoot: string): Prom
     // Before `build()`: inside an asar this rewrites esbuild's binary path to the
     // unpacked real file. See `ensureEsbuildBinaryIsExecutable` for why `spawn` needs it.
     ensureEsbuildBinaryIsExecutable();
+    // The import is *here*, after the guard, and not at the top of the file: esbuild
+    // captures `process.env.ESBUILD_BINARY_PATH` into a module-scope constant when its
+    // module is evaluated and never re-reads the environment. A static import is hoisted
+    // above every statement here, so it would capture the unset value first — the exact
+    // packaged `spawn ENOTDIR` bug. Loading it dynamically, after the guard, evaluates it
+    // with the path already in place.
+    const { build } = await import('esbuild');
     const result = await build({
       entryPoints: [entryPoint],
       bundle: true,
@@ -1063,6 +1079,9 @@ export async function bundlePrefabsForBrowser(
 
   try {
     ensureEsbuildBinaryIsExecutable();
+    // Dynamic for the same reason as `bundleEntry`: esbuild must be evaluated with
+    // `ESBUILD_BINARY_PATH` already set, which a hoisted static import cannot guarantee.
+    const { build } = await import('esbuild');
     const result = await build({
       entryPoints: [entryPoint],
       bundle: true,
