@@ -55,8 +55,8 @@ export function summarizeSearch(
   query: string,
 ): string {
   if (refusal !== null) return refusal;
-  if (result === null) return 'Type to search the project by file name or content.';
-  if (query.trim() === '') return 'Type to search the project by file name or content.';
+  if (result === null) return 'Type to search by file name or content.';
+  if (query.trim() === '') return 'Type to search by file name or content.';
 
   const fileCount = result.files.length;
   const matchCount = result.matches.length;

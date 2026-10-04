@@ -229,24 +229,24 @@
 
   {#if !hasProject}
     <p class="search-note">Open a project to search it.</p>
-  {/if}
+  {:else}
+    {#if refusal !== null}
+      <p class="search-note search-error">{refusal}</p>
+    {:else if result !== null && result.skipped.length > 0}
+      <!--
+        Skipped files are shown, not hidden. A file that was not searched looks
+        identical to a file with nothing in it, and a developer who is told which
+        files were skipped can decide whether to go looking another way.
+      -->
+      <ul class="search-skipped" aria-label="Files that were not searched">
+        {#each result.skipped as note (note)}
+          <li>{note}</li>
+        {/each}
+      </ul>
+    {/if}
 
-  {#if refusal !== null}
-    <p class="search-note search-error">{refusal}</p>
-  {:else if result !== null && result.skipped.length > 0}
-    <!--
-      Skipped files are shown, not hidden. A file that was not searched looks
-      identical to a file with nothing in it, and a developer who is told which
-      files were skipped can decide whether to go looking another way.
-    -->
-    <ul class="search-skipped" aria-label="Files that were not searched">
-      {#each result.skipped as note (note)}
-        <li>{note}</li>
-      {/each}
-    </ul>
+    <p class="search-summary">{summary}</p>
   {/if}
-
-  <p class="search-summary">{summary}</p>
 
   {#if result !== null && listed.length > 0}
     <div class="search-body">

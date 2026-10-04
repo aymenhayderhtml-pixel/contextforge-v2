@@ -1,5 +1,5 @@
 <!--
-  ProjectScreen.svelte — open a project.
+  ProjectScreen.svelte — open a project or create a new one from an AI reply.
 -->
 <script module lang="ts">
   export const RECENT_PROJECTS_KEY = 'contextforge:recent_projects';
@@ -13,22 +13,23 @@
     'Name it',
     'Describe the game',
     'Take the prompt',
+    'Paste the reply',
+    'Install and run',
   ] as const;
 </script>
 
 <script lang="ts">
-  import { untrack } from 'svelte';
+  import { onMount, untrack, onDestroy } from 'svelte';
   // **Type-only.** `@contextforge/core` is `external` in the renderer build,
   // which is sound only while every renderer import of it is erased. A value
   // import leaves a bare specifier the browser cannot resolve and the app fails
   // to mount with no error — see D45.
-  //
-  // So the prompt text is built in the main process. What this screen owns is
-  // the *gate*: `scaffoldPromptProblems` is asked over IPC, and its answer
-  // decides whether the copy button is enabled.
-  import type { GameBrief } from '@contextforge/core';
+  import type {
+    GameBrief,
+    PreviewProjectResult,
+  } from '@contextforge/core';
   import type { EditorStore } from '../store.js';
-  import { CHANNELS } from '../../ipc.js';
+  import { CHANNELS, EVENTS } from '../../ipc.js';
 
   function loadRecentProjects(): string[] {
     try {
@@ -67,32 +68,15 @@
   // svelte-ignore state_referenced_locally
   let path = $state(store.snapshot?.project.root ?? '');
   let opening = $state(false);
+  let openError = $state<string | null>(null);
   // svelte-ignore state_referenced_locally
   let recents = $state<string[]>(initialRecents ?? loadRecentProjects());
-  // While the native picker is up, the Browse button stays disabled. Without this
-  // a second click queues a second modal dialog behind the first one, which is
-  // both confusing and a leak of OS windows.
   let browsing = $state(false);
 
-  // Add the opened project to the recents list, once the snapshot has one.
-  //
-  // `addRecent` writes `recents`, and this effect reads `snapshot` — but the
-  // re-render it triggers re-runs this effect, which calls `addRecent` again,
-  // which writes `recents` again. Svelte gives up with
-  // `effect_update_depth_exceeded` and the screen never settles, so the project
-  // never opens and every screen that depends on it stays disabled. The symptom
-  // is a frozen app; the cause is this effect feeding itself.
-  //
-  // The guard is the point of the effect, so it is written as the condition
-  // rather than hidden in a helper: if the root is already first in the list,
-  // there is nothing to add.
   $effect(() => {
     const root = snapshot?.project.root;
     if (!root) return;
     path = root;
-    // `untrack` because `addRecent`'s own writes are not an input to this effect.
-    // Writing the same root again is a no-op, but making the effect re-enter on
-    // its own output is what turned a one-line convenience into a freeze.
     untrack(() => addRecent(root));
   });
 
@@ -109,15 +93,14 @@
     if (!target) return;
     path = target;
     opening = true;
+    openError = null;
     try {
-      // The store's own `openProject` pushes a notice for every problem found, and
-      // returns false for a path that cannot be opened at all.
       const opened = await store.openProject(target);
-      // Landing on the Scene screen is the point of opening a project, so a
-      // success goes there — a developer who opened a project wants to see it.
       if (opened) {
         addRecent(target);
         onOpenScene();
+      } else {
+        openError = 'This folder has no scene.json yet.';
       }
     } finally {
       opening = false;
@@ -128,20 +111,6 @@
     await store.closeProject();
   }
 
-  /**
-   * Ask the main process for the OS folder picker, and open whatever comes back.
-   *
-   * There is no `<input type="file" webkitdirectory>` here any more, and there
-   * cannot be one. It used to be a visually hidden file input whose `File.path`
-   * property was read to recover the folder — a non-standard Chromium extension
-   * that Electron deprecated in v32 and removed under `sandbox: true`, which this
-   * app sets. The picker therefore does nothing at all, silently, which is the
-   * worst possible failure for a button that looks like it works.
-   *
-   * A cancel is `null` and must produce *no* error UI: the user pressed Escape.
-   * The `finally` is what guarantees the button comes back even if `open` or the
-   * IPC request throws.
-   */
   async function browse(): Promise<void> {
     if (browsing) return;
     browsing = true;
@@ -154,64 +123,116 @@
     }
   }
 
-  /** Problems from the current snapshot, if any. */
   const problems = $derived(snapshot?.problems ?? []);
 
-  // ── New Project (Step 5d) ───────────────────────────────────────────────────
+  // ── New Project (5-step flow) ──────────────────────────────────────────────
 
-  /** Whether the New Project flow is showing at all. */
   let newProjectOpen = $state(false);
-  /**
-   * Which step is showing. Step 3 is reachable only by passing through the
-   * first two, so the wizard cannot start at the prompt — but the developer
-   * *can* step back, and doing so must not lose what they typed.
-   */
-  let step = $state<1 | 2 | 3>(1);
-  /** The folder name, step 1. */
+  let step = $state<1 | 2 | 3 | 4 | 5>(1);
   let draftName = $state('');
-  /** The game, in the developer's own words, step 2. */
   let draftIdea = $state('');
-  /** The folder the new project will live in, chosen with the OS dialog. */
-  let parentFolder = $state<string | null>(null);
-  /** True while the native picker is up for this flow. */
+  let parentFolder = $state<string>('');
   let choosingFolder = $state(false);
 
-  /**
-   * Why the scaffold prompt cannot be copied yet, from core's `checkBrief`.
-   *
-   * Not a local reimplementation. `generateProject` refuses a brief that fails
-   * these rules, so a screen that checked them differently would enable a copy
-   * button that produced a prompt the AI could not act on — and the developer
-   * would find out only after pasting it.
-   */
   const brief = $derived<GameBrief>({ name: draftName, idea: draftIdea });
-
-  /**
-   * The blocking reasons, fetched from core in the main process.
-   *
-   * Async, so this is state rather than a `$derived`. It is refreshed when the
-   * flow opens and when either field changes.
-   */
   let scaffoldProblems = $state<string[]>([]);
 
-  /**
-   * Whether the copy button may be enabled.
-   *
-   * Both conditions are required. `scaffoldProblems` is the real rule — it is
-   * core's `checkBrief` — but it is fetched asynchronously, so on the very first
-   * render it is an empty array. Requiring both fields to be non-empty as well
-   * means the button can never be briefly enabled while a fetch is in flight,
-   * and fails closed if the fetch never arrives.
-   */
   const canCopy = $derived(
     draftName.trim() !== '' && draftIdea.trim() !== '' && scaffoldProblems.length === 0,
   );
 
-  /** The built prompt, or null while it has not been fetched. */
   let promptText = $state<string | null>(null);
   let promptError = $state<string | null>(null);
   let promptBusy = $state(false);
   let copied = $state(false);
+  let copyTimer: ReturnType<typeof setTimeout> | null = null;
+
+  // Step 4 state
+  let pastedReply = $state('');
+  let previewTimeout: ReturnType<typeof setTimeout> | null = null;
+  let previewBusy = $state(false);
+  let previewResult = $state<PreviewProjectResult | null>(null);
+  let previewError = $state<string | null>(null);
+  let creatingProject = $state(false);
+  let createError = $state<string | null>(null);
+
+  // Step 5 state
+  let createdPath = $state<string>('');
+  let createdFilesCount = $state<number>(0);
+  let createdPackageJson = $state<Record<string, unknown> | null>(null);
+  let installing = $state(false);
+  let installLogs = $state<string[]>([]);
+  let installSuccess = $state(false);
+  let installError = $state<string | null>(null);
+  let devRunning = $state(false);
+  let devUrl = $state<string | null>(null);
+  let devError = $state<string | null>(null);
+  let logEl: HTMLDivElement | null = $state(null);
+
+  // Initialize default projects folder
+  async function initProjectsFolder(): Promise<void> {
+    try {
+      const res = await store.requestChannel(CHANNELS.projectsFolder, { action: 'get' });
+      if (res.ok && res.value.folder && !parentFolder) {
+        parentFolder = res.value.folder;
+      }
+    } catch {
+      // Ignore initial load failure
+    }
+  }
+
+  $effect(() => {
+    if (!parentFolder) {
+      void initProjectsFolder();
+    }
+  });
+
+  // Listen to process events
+  onMount(() => {
+    const unsubProcessOutput = store.onEvent(EVENTS.processOutput, (payload) => {
+      if (payload.phase === 'install') {
+        installLogs = [...installLogs, payload.line].slice(-200);
+        if (logEl) {
+          requestAnimationFrame(() => {
+            if (logEl) logEl.scrollTop = logEl.scrollHeight;
+          });
+        }
+      }
+    });
+
+    const unsubDevReady = store.onEvent(EVENTS.devServerReady, (payload) => {
+      devRunning = true;
+      devUrl = payload.url;
+    });
+
+    const unsubProcessExit = store.onEvent(EVENTS.processExit, (payload) => {
+      if (payload.phase === 'install') {
+        installing = false;
+        if (payload.exitCode === 0) {
+          installSuccess = true;
+          installError = null;
+        } else {
+          installSuccess = false;
+          installError = `Install failed (exit ${payload.exitCode ?? payload.signal ?? 'unknown'})`;
+        }
+      } else if (payload.phase === 'dev') {
+        devRunning = false;
+        devUrl = null;
+      }
+    });
+
+    return () => {
+      unsubProcessOutput();
+      unsubDevReady();
+      unsubProcessExit();
+    };
+  });
+
+  onDestroy(() => {
+    if (copyTimer) clearTimeout(copyTimer);
+    if (previewTimeout) clearTimeout(previewTimeout);
+    void stopDev();
+  });
 
   async function scaffoldProblemsFor(briefToCheck: GameBrief): Promise<string[]> {
     try {
@@ -220,9 +241,6 @@
         scaffoldProblems = result.value.problems;
         return result.value.problems;
       }
-      // A refusal here means the screen cannot know the rules, so it refuses to
-      // offer the copy button. Failing closed is the only safe direction: a
-      // wrongly-enabled button produces a prompt that silently fails.
       scaffoldProblems = [result.reason];
       return scaffoldProblems;
     } catch (error) {
@@ -244,42 +262,55 @@
     promptText = null;
     promptError = null;
     copied = false;
+    pastedReply = '';
+    previewResult = null;
+    previewError = null;
+    createError = null;
+    installLogs = [];
+    installSuccess = false;
+    installError = null;
+    devRunning = false;
+    devUrl = null;
+    devError = null;
+    if (!parentFolder) {
+      await initProjectsFolder();
+    }
     await refreshBriefProblems();
   }
 
+  async function stopDev(): Promise<void> {
+    if (!createdPath) return;
+    try {
+      await store.requestChannel(CHANNELS.runProjectDev, { projectPath: createdPath, stop: true });
+    } catch {
+      // Ignore
+    }
+    devRunning = false;
+    devUrl = null;
+  }
+
   function closeNewProject(): void {
+    void stopDev();
     newProjectOpen = false;
     step = 1;
   }
 
-  function goTo(target: 1 | 2 | 3): void {
+  function goTo(target: 1 | 2 | 3 | 4 | 5): void {
     step = target;
-    promptText = null;
-    promptError = null;
-    copied = false;
-    void refreshBriefProblems();
+    if (target <= 2) {
+      void refreshBriefProblems();
+    }
   }
 
-  /**
-   * Step 2 → 3.
-   *
-   * Refuses while the brief is incomplete, and says why. The button is also
-   * disabled in that case, so this is the belt to that braces' — a disabled
-   * button with no explanation is worse than one that says what is missing.
-   */
   async function toPrompt(): Promise<void> {
     if (!canCopy) return;
-    await loadPrompt();
-    step = 3;
-  }
-
-  async function loadPrompt(): Promise<void> {
     promptBusy = true;
     promptError = null;
     try {
       const result = await store.requestChannel(CHANNELS.scaffoldPrompt, brief);
       if (result.ok) {
         promptText = result.value.prompt;
+        step = 3;
       } else {
         promptText = null;
         promptError = result.reason;
@@ -292,26 +323,14 @@
     }
   }
 
-  /**
-   * Ask the OS for the folder the project will live in.
-   *
-   * Step 1's "Choose folder" uses the same `pickFolder` channel as Open. The
-   * dialog *opens* an existing folder rather than creating one — a native
-   * create-folder dialog is a different Electron call, and `pickFolder` is
-   * deliberately restricted to `showOpenDialog` so the main process stays
-   * drivable headlessly (see `pickFolder.test.ts`). So this picks the
-   * **parent**, and the project folder name from the same form becomes the last
-   * segment. That is why step 1 asks for both at once.
-   */
   async function chooseParentFolder(): Promise<void> {
     if (choosingFolder) return;
     choosingFolder = true;
     try {
       const chosen = await store.pickFolder();
-      // A cancel is `null` and must produce no error UI: the user pressed
-      // Escape. It is the same contract `browse()` follows.
       if (chosen === null) return;
       parentFolder = chosen;
+      await store.requestChannel(CHANNELS.projectsFolder, { action: 'set', folder: chosen });
       if (draftName.trim() === '') {
         draftName = chosen.split('/').filter(Boolean).pop() ?? '';
       }
@@ -320,21 +339,161 @@
     }
   }
 
-  /**
-   * Copy the prompt.
-   *
-   * Silent on failure, and only here: `navigator.clipboard` needs a secure
-   * context and a permission the app never asks for, so a refusal is almost
-   * always a red line about something the developer cannot act on. The same
-   * reasoning and the same shape as `ContextScreen.copyPrompt`.
-   */
   async function copyPrompt(): Promise<void> {
-    if (!canCopy || promptText === null) return;
+    if (promptText === null) return;
     try {
       await navigator.clipboard.writeText(promptText);
       copied = true;
+      if (copyTimer) clearTimeout(copyTimer);
+      copyTimer = setTimeout(() => {
+        copied = false;
+      }, 2000);
     } catch {
       copied = false;
+    }
+  }
+
+  function onReplyInput(): void {
+    if (previewTimeout) clearTimeout(previewTimeout);
+    createError = null;
+    if (!pastedReply.trim()) {
+      previewResult = null;
+      previewError = null;
+      return;
+    }
+    previewTimeout = setTimeout(() => {
+      void runPreview();
+    }, 300);
+  }
+
+  async function runPreview(): Promise<void> {
+    if (!parentFolder || !draftName.trim() || !pastedReply.trim()) return;
+    previewBusy = true;
+    try {
+      const res = await store.requestChannel(CHANNELS.previewProjectReply, {
+        parentFolder,
+        projectName: draftName.trim(),
+        reply: pastedReply,
+      });
+      if (res.ok) {
+        previewResult = res.value;
+        previewError = null;
+      } else {
+        previewResult = null;
+        previewError = res.reason;
+      }
+    } catch (err) {
+      previewResult = null;
+      previewError = err instanceof Error ? err.message : String(err);
+    } finally {
+      previewBusy = false;
+    }
+  }
+
+  const canCreateProject = $derived(
+    previewResult !== null &&
+    previewResult.ok &&
+    previewResult.files.length > 0 &&
+    previewResult.files.every((f) => f.syntax.valid) &&
+    !previewResult.refusal &&
+    previewError === null &&
+    !previewBusy,
+  );
+
+  async function handleCreateProject(): Promise<void> {
+    if (!canCreateProject || creatingProject) return;
+    creatingProject = true;
+    createError = null;
+    try {
+      const res = await store.requestChannel(CHANNELS.createProjectReply, {
+        parentFolder,
+        projectName: draftName.trim(),
+        reply: pastedReply,
+      });
+      if (res.ok) {
+        createdPath = res.value.targetFolder;
+        createdFilesCount = res.value.files.length;
+        const pkgFile = res.value.files.find(
+          (f) => f.path === 'package.json' || f.path.endsWith('/package.json'),
+        );
+        if (pkgFile) {
+          try {
+            createdPackageJson = JSON.parse(pkgFile.content) as Record<string, unknown>;
+          } catch {
+            createdPackageJson = null;
+          }
+        } else {
+          createdPackageJson = null;
+        }
+        step = 5;
+      } else {
+        createError = res.reason;
+      }
+    } catch (err) {
+      createError = err instanceof Error ? err.message : String(err);
+    } finally {
+      creatingProject = false;
+    }
+  }
+
+  const allPackages = $derived.by(() => {
+    if (!createdPackageJson) return [];
+    const deps = (createdPackageJson.dependencies as Record<string, string>) ?? {};
+    const devDeps = (createdPackageJson.devDependencies as Record<string, string>) ?? {};
+    const list: [string, string, boolean][] = [];
+    for (const [k, v] of Object.entries(deps)) list.push([k, v, false]);
+    for (const [k, v] of Object.entries(devDeps)) list.push([k, v, true]);
+    return list;
+  });
+
+  async function runInstall(): Promise<void> {
+    if (installing || !createdPath) return;
+    installing = true;
+    installSuccess = false;
+    installError = null;
+    installLogs = [];
+    try {
+      const res = await store.requestChannel(CHANNELS.installProject, { projectPath: createdPath });
+      if (!res.ok) {
+        installing = false;
+        installError = res.reason;
+      }
+    } catch (err) {
+      installing = false;
+      installError = err instanceof Error ? err.message : String(err);
+    }
+  }
+
+  async function cancelInstall(): Promise<void> {
+    if (!createdPath) return;
+    try {
+      await store.requestChannel(CHANNELS.installProject, { projectPath: createdPath, cancel: true });
+    } catch {
+      // Ignore
+    }
+  }
+
+  async function startDev(): Promise<void> {
+    if (devRunning || !createdPath) return;
+    devError = null;
+    try {
+      const res = await store.requestChannel(CHANNELS.runProjectDev, {
+        projectPath: createdPath,
+      });
+      if (!res.ok) {
+        devError = res.reason;
+      }
+    } catch (err) {
+      devError = err instanceof Error ? err.message : String(err);
+    }
+  }
+
+  async function openDevBrowser(): Promise<void> {
+    if (!devUrl) return;
+    try {
+      await store.requestChannel(CHANNELS.openDevUrl, { url: devUrl });
+    } catch {
+      // Ignore
     }
   }
 </script>
@@ -346,125 +505,127 @@
       Open a folder containing a <code>scene.json</code> and a <code>prefabs/</code> directory.
       ContextForge never writes outside the folder you open.
     </p>
-    <button type="button" class="secondary" onclick={() => void openNewProject()}>
-      New project…
-    </button>
+    {#if !newProjectOpen}
+      <button type="button" class="secondary" onclick={() => void openNewProject()}>
+        New project…
+      </button>
+    {/if}
   </header>
 
   <!--
-    The New Project flow (Step 5d). Three steps, and step 3 cannot be reached
-    without passing through the first two — so the prompt is never shown before
-    the brief is filled in. The copy button on step 3 is additionally gated on
-    core's own `checkBrief`, fetched over IPC, so the screen and the generator
-    cannot disagree about whether a brief is usable.
+    The New Project wizard (5 steps).
   -->
   {#if newProjectOpen}
     <div class="panel new-project">
       <ol class="steps">
         {#each NEW_PROJECT_STEPS as label, i (label)}
           <li class:active={step === i + 1} class:done={step > i + 1}>
-            <span class="step-num">{i + 1}</span>
+            {#if step > i + 1}
+              <span class="step-num">✓</span>
+            {:else}
+              <span class="step-num">{i + 1}</span>
+            {/if}
             <span class="step-label">{label}</span>
           </li>
         {/each}
       </ol>
 
       {#if step === 1}
-        <label class="field" for="np-name">
-          <span class="label">Project name</span>
-          <input
-            id="np-name"
-            type="text"
-            spellcheck="false"
-            autocomplete="off"
-            placeholder="star-crawler"
-            bind:value={draftName}
-            oninput={() => void refreshBriefProblems()}
-          />
-        </label>
+        <div class="field-group">
+          <label class="field" for="np-name">
+            <span class="label">Project name</span>
+            <input
+              id="np-name"
+              type="text"
+              spellcheck="false"
+              autocomplete="off"
+              placeholder="star-crawler"
+              bind:value={draftName}
+              oninput={() => void refreshBriefProblems()}
+            />
+            <span class="hint">Lowercase letters, numbers and dashes. Example: star-crawler</span>
+          </label>
 
-        <label class="field" for="np-folder">
-          <span class="label">Create it in</span>
-          <div class="input-row">
-            <input id="np-folder" type="text" readonly value={parentFolder ?? ''} />
-            <button
-              type="button"
-              class="secondary"
-              onclick={() => void chooseParentFolder()}
-              disabled={choosingFolder}
-            >
-              Choose folder…
-            </button>
-          </div>
-          <span class="hint">
-            Picks where the project will live. The folder created inside it is named above.
-          </span>
-        </label>
+          <label class="field" for="np-folder">
+            <span class="label">Create it in</span>
+            <div class="input-row">
+              <input id="np-folder" type="text" readonly value={parentFolder} />
+              <button
+                type="button"
+                class="secondary"
+                onclick={() => void chooseParentFolder()}
+                disabled={choosingFolder}
+              >
+                Choose folder…
+              </button>
+            </div>
+            <span class="hint">This is where your games are saved. It is remembered.</span>
+          </label>
+        </div>
 
         <div class="actions">
-          <button type="button" class="primary" onclick={() => goTo(2)} disabled={draftName.trim() === ''}>
+          <button
+            type="button"
+            class="primary"
+            onclick={() => goTo(2)}
+            disabled={draftName.trim() === ''}
+          >
             Next: describe the game
           </button>
+          <button type="button" class="secondary cancel-btn" onclick={closeNewProject}>Cancel</button>
         </div>
       {:else if step === 2}
-        <label class="field" for="np-idea">
-          <span class="label">What is the game?</span>
-          <textarea
-            id="np-idea"
-            rows="5"
-            placeholder="You drive a hover car around a collapsing space station, collecting fuel pods."
-            bind:value={draftIdea}
-            oninput={() => void refreshBriefProblems()}
-          ></textarea>
-          <span class="hint">
-            One or two sentences on what the player actually does. This goes into the prompt
-            verbatim — the AI will build exactly this, so be specific.
-          </span>
-        </label>
+        <div class="field-group">
+          <label class="field" for="np-idea">
+            <span class="label">What is the game?</span>
+            <textarea
+              id="np-idea"
+              rows="5"
+              placeholder="You drive a hover car around a collapsing space station, collecting fuel pods."
+              bind:value={draftIdea}
+              oninput={() => void refreshBriefProblems()}
+            ></textarea>
+            <span class="hint">
+              One or two sentences on what the player actually does. This goes into the prompt word for word.
+            </span>
+          </label>
 
-        {#if scaffoldProblems.length > 0 && draftName.trim() !== ''}
-          <ul class="problems brief-problems" role="alert">
-            {#each scaffoldProblems as problem (problem)}
-              <li>{problem}</li>
-            {/each}
-          </ul>
-        {/if}
+          {#if scaffoldProblems.length > 0 && draftName.trim() !== ''}
+            <ul class="problems brief-problems" role="alert">
+              {#each scaffoldProblems as problem (problem)}
+                <li>{problem}</li>
+              {/each}
+            </ul>
+          {/if}
+        </div>
 
         <div class="actions">
           <button type="button" class="secondary" onclick={() => goTo(1)}>Back</button>
-          <button type="button" class="primary" onclick={() => void toPrompt()}>
+          <button
+            type="button"
+            class="primary"
+            onclick={() => void toPrompt()}
+            disabled={draftIdea.trim() === '' || scaffoldProblems.length > 0}
+          >
             Build the prompt
           </button>
+          <button type="button" class="secondary cancel-btn" onclick={closeNewProject}>Cancel</button>
         </div>
-      {:else}
-        {#if promptBusy}
-          <p class="lede small">Building…</p>
-        {:else if promptError !== null}
-          <p class="refusal" role="alert">{promptError}</p>
-        {:else if promptText !== null}
-          <p class="lede small">
-            Paste this into an AI. It describes the project shape, the <code>scene.json</code>
-            contract and the prefab rules — the same rules <code>npm run lint:prefabs</code>
-            enforces.
-          </p>
-          <pre class="prompt">{promptText}</pre>
-        {/if}
+      {:else if step === 3}
+        <div class="field-group">
+          {#if promptBusy}
+            <p class="lede small">Building…</p>
+          {:else if promptError !== null}
+            <p class="refusal" role="alert">{promptError}</p>
+          {:else if promptText !== null}
+            <pre class="prompt">{promptText}</pre>
+          {/if}
 
-        {#if scaffoldProblems.length > 0}
-          <ul class="problems brief-problems" role="alert">
-            {#each scaffoldProblems as problem (problem)}
-              <li>{problem}</li>
-            {/each}
-          </ul>
-        {/if}
+          <p class="hint">Paste this into any AI chat, then come back with its reply.</p>
+        </div>
 
         <div class="actions">
           <button type="button" class="secondary" onclick={() => goTo(2)}>Back</button>
-          <!--
-            The gate. `canCopy` is false while either field is empty, and false
-            while core reports any problem — so this button cannot be used to
-            copy a prompt built from a brief the generator would refuse.
-          -->
           <button
             type="button"
             class="primary"
@@ -473,72 +634,252 @@
           >
             {copied ? 'Copied' : 'Copy prompt'}
           </button>
+          <button type="button" class="secondary" onclick={() => goTo(4)}>
+            I have the reply
+          </button>
+          <button type="button" class="secondary cancel-btn" onclick={closeNewProject}>Cancel</button>
+        </div>
+      {:else if step === 4}
+        <div class="field-group">
+          <label class="field" for="np-reply">
+            <span class="label">Paste the AI's reply</span>
+            <textarea
+              id="np-reply"
+              class="reply-textarea"
+              rows="12"
+              placeholder="Paste the whole reply here. It must contain blocks that start with ### FILE:"
+              bind:value={pastedReply}
+              oninput={onReplyInput}
+            ></textarea>
+          </label>
+
+          {#if previewError !== null}
+            <p class="refusal" role="alert">{previewError}</p>
+          {/if}
+
+          {#if createError !== null}
+            <p class="refusal" role="alert">{createError}</p>
+          {/if}
+
+          {#if previewResult !== null}
+            {@const failedCount = previewResult.files.filter((f) => !f.syntax.valid).length}
+            {#if failedCount === 0}
+              <p class="summary-line ok">
+                {previewResult.files.length} {previewResult.files.length === 1 ? 'file' : 'files'}, all syntax checks passed
+              </p>
+            {:else}
+              <p class="summary-line error">
+                {previewResult.files.length} {previewResult.files.length === 1 ? 'file' : 'files'}, {failedCount} syntax errors
+              </p>
+            {/if}
+
+            <ul class="file-verdict-list" aria-label="Files to be created">
+              {#each previewResult.files as file (file.path)}
+                <li class="file-verdict-item">
+                  <span class="tag-new">NEW</span>
+                  <span class="file-path">{file.path}</span>
+                  {#if file.syntax.valid}
+                    <span class="verdict-ok">✓</span>
+                  {:else}
+                    <span class="verdict-error">
+                      SYNTAX ERROR: {file.syntax.message}
+                    </span>
+                  {/if}
+                </li>
+              {/each}
+            </ul>
+
+            <p class="will-create">Will create: <code>{previewResult.targetFolder}</code></p>
+
+            {#if previewResult.refusal?.includes('already exists and is not empty')}
+              <p class="refusal" role="alert">
+                This folder already exists and is not empty. Go back and pick another name.
+              </p>
+            {:else if previewResult.refusal}
+              <p class="refusal" role="alert">
+                {previewResult.refusal}
+              </p>
+            {/if}
+          {/if}
+        </div>
+
+        <div class="actions">
+          <button type="button" class="secondary" onclick={() => { step = 3; }}>Back</button>
+          <button
+            type="button"
+            class="primary"
+            onclick={() => void handleCreateProject()}
+            disabled={!canCreateProject || creatingProject}
+          >
+            {creatingProject ? 'Creating project…' : 'Create project'}
+          </button>
+          <button type="button" class="secondary cancel-btn" onclick={closeNewProject}>Cancel</button>
+        </div>
+      {:else}
+        <!-- Step 5: Install and run -->
+        <div class="field-group">
+          <p class="created-banner">
+            <span class="verdict-ok">✓</span> Created <code>{createdPath}</code>, {createdFilesCount} files written.
+          </p>
+
+          <div class="packages-box">
+            <span class="box-title">Packages</span>
+            {#if allPackages.length > 0}
+              <ul class="package-list">
+                {#each allPackages as [pkg, ver, isDev] (pkg)}
+                  <li>
+                    <code>{pkg}</code> <span class="pkg-ver">{ver}</span>
+                    {#if isDev}<span class="pkg-dev">dev</span>{/if}
+                  </li>
+                {/each}
+              </ul>
+            {:else}
+              <p class="hint">(No dependencies listed in package.json)</p>
+            {/if}
+          </div>
+
+          <p class="hint install-notice">
+            Installing downloads packages from the npm registry. Install scripts are turned off, so no package can run code during the install.
+          </p>
+
+          {#if installLogs.length > 0 || installing}
+            <div class="log-box-wrapper" bind:this={logEl}>
+              <pre class="log-box">{installLogs.join('\n')}</pre>
+            </div>
+          {/if}
+
+          {#if installError !== null}
+            <p class="refusal" role="alert">{installError}</p>
+          {:else if installSuccess}
+            <p class="install-ok-line"><span class="verdict-ok">✓</span> Installed</p>
+          {/if}
+
+          {#if devRunning && devUrl}
+            <div class="dev-banner">
+              <span>Running at <code>{devUrl}</code></span>
+              <button type="button" class="secondary dev-open-btn" onclick={() => void openDevBrowser()}>
+                Open in browser
+              </button>
+            </div>
+          {/if}
+
+          {#if devError !== null}
+            <p class="refusal" role="alert">{devError}</p>
+          {/if}
+        </div>
+
+        <div class="actions">
+          <button
+            type="button"
+            class="secondary"
+            onclick={() => goTo(4)}
+            disabled={installing || devRunning}
+          >
+            Back
+          </button>
+
+          {#if installing}
+            <button type="button" class="secondary" onclick={() => void cancelInstall()}>
+              Cancel install
+            </button>
+          {:else if !installSuccess}
+            <button type="button" class="primary" onclick={() => void runInstall()}>
+              Install packages
+            </button>
+          {:else if !devRunning}
+            <button type="button" class="primary" onclick={() => void startDev()}>
+              Run game
+            </button>
+          {:else}
+            <button type="button" class="secondary" onclick={() => void stopDev()}>
+              Stop
+            </button>
+          {/if}
+
+          <button
+            type="button"
+            class="secondary open-cf-btn"
+            onclick={() => void open(createdPath)}
+          >
+            Open in ContextForge
+          </button>
+
+          <button type="button" class="secondary cancel-btn" onclick={closeNewProject}>Cancel</button>
         </div>
       {/if}
-
-      <div class="actions">
-        <button type="button" class="secondary" onclick={closeNewProject}>Cancel</button>
-      </div>
     </div>
   {/if}
 
-  <div class="panel">
-    <label class="field" for="project-path">
-      <span class="label">Project folder path</span>
-      <div class="input-row">
-        <input
-          id="project-path"
-          type="text"
-          spellcheck="false"
-          autocomplete="off"
-          placeholder="/home/you/projects/my-game"
-          bind:value={path}
-          onkeydown={(event) => {
-            if (event.key === 'Enter') void open();
-          }}
-        />
-        <button
-          type="button"
-          class="secondary browse-btn"
-          onclick={() => void browse()}
-          disabled={opening || browsing}
-        >
-          Browse…
-        </button>
-      </div>
-    </label>
-
-    <div class="actions">
-      <button type="button" class="primary" onclick={() => void open()} disabled={opening}>
-        {opening ? 'Opening project…' : 'Open project'}
+  <!-- Bug B4: collapse to single text link while wizard is open -->
+  {#if newProjectOpen}
+    <div class="panel collapsed-open">
+      <button type="button" class="link-btn" onclick={closeNewProject}>
+        Open an existing project instead
       </button>
+    </div>
+  {:else}
+    <div class="panel">
+      <label class="field" for="project-path">
+        <span class="label">Project folder path</span>
+        <div class="input-row">
+          <input
+            id="project-path"
+            type="text"
+            spellcheck="false"
+            autocomplete="off"
+            placeholder="/home/you/projects/my-game"
+            bind:value={path}
+            onkeydown={(event) => {
+              if (event.key === 'Enter') void open();
+            }}
+          />
+          <button
+            type="button"
+            class="secondary browse-btn"
+            onclick={() => void browse()}
+            disabled={opening || browsing}
+          >
+            Browse…
+          </button>
+        </div>
+      </label>
 
-      {#if snapshot !== null}
-        <button type="button" class="secondary" onclick={() => void close()}>
-          Close project
-        </button>
+      {#if openError !== null}
+        <p class="refusal" role="alert">{openError}</p>
       {/if}
-    </div>
-  </div>
 
-  {#if recents.length > 0}
-    <div class="panel recents-panel">
-      <h2>Recent projects</h2>
-      <ul class="recent-list">
-        {#each recents as item (item)}
-          <li>
-            <button
-              type="button"
-              class="recent-item"
-              onclick={() => void open(item)}
-              disabled={opening}
-            >
-              <span class="recent-path">{item}</span>
-            </button>
-          </li>
-        {/each}
-      </ul>
+      <div class="actions">
+        <button type="button" class="primary" onclick={() => void open()} disabled={opening}>
+          {opening ? 'Opening project…' : 'Open project'}
+        </button>
+
+        {#if snapshot !== null}
+          <button type="button" class="secondary" onclick={() => void close()}>
+            Close project
+          </button>
+        {/if}
+      </div>
     </div>
+
+    {#if recents.length > 0}
+      <div class="panel recents-panel">
+        <h2>Recent projects</h2>
+        <ul class="recent-list">
+          {#each recents as item (item)}
+            <li>
+              <button
+                type="button"
+                class="recent-item"
+                onclick={() => void open(item)}
+                disabled={opening}
+              >
+                <span class="recent-path">{item}</span>
+              </button>
+            </li>
+          {/each}
+        </ul>
+      </div>
+    {/if}
   {/if}
 
   {#if snapshot !== null}
@@ -581,7 +922,7 @@
         </ul>
       </div>
     {/if}
-  {:else}
+  {:else if !newProjectOpen}
     <p class="empty">
       No project is open. Type a folder path above or browse to open a project.
     </p>
@@ -626,6 +967,12 @@
     padding: 16px;
   }
 
+  .field-group {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+
   .field {
     display: flex;
     flex-direction: column;
@@ -636,6 +983,28 @@
     color: var(--muted);
   }
 
+  /* Shared input styles fixing Bug B1 */
+  .field input[type='text'],
+  .input-row input[type='text'] {
+    width: 100%;
+    background: var(--bg);
+    border: 1px solid var(--line);
+    border-radius: 5px;
+    padding: 8px 10px;
+    font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+    font-size: 13px;
+    color: var(--text);
+    box-sizing: border-box;
+    height: 36px;
+  }
+
+  .field input[type='text']:focus,
+  .input-row input[type='text']:focus,
+  textarea:focus {
+    outline: none;
+    border-color: var(--accent);
+  }
+
   .input-row {
     display: flex;
     gap: 8px;
@@ -643,12 +1012,6 @@
   }
   .input-row input[type='text'] {
     flex: 1;
-    background: var(--bg);
-    border: 1px solid var(--line);
-    border-radius: 5px;
-    padding: 8px 10px;
-    font-family: ui-monospace, 'SF Mono', Menlo, monospace;
-    font-size: 13px;
   }
 
   .browse-btn {
@@ -658,7 +1021,11 @@
   .actions {
     display: flex;
     gap: 10px;
-    margin-top: 14px;
+    align-items: center;
+    margin-top: 16px;
+  }
+  .actions .cancel-btn {
+    margin-left: auto;
   }
 
   .primary {
@@ -666,9 +1033,15 @@
     color: #06121a;
     border: 1px solid var(--accent);
     border-radius: 5px;
-    padding: 8px 16px;
+    padding: 0 16px;
+    height: 36px;
     font-weight: 600;
+    font-size: 13px;
     cursor: pointer;
+    box-sizing: border-box;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
   }
   .primary:disabled {
     opacity: 0.6;
@@ -679,12 +1052,35 @@
     color: var(--text);
     border: 1px solid var(--line);
     border-radius: 5px;
-    padding: 8px 14px;
+    padding: 0 14px;
+    height: 36px;
+    font-size: 13px;
     cursor: pointer;
+    box-sizing: border-box;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
   }
   .secondary:disabled {
     opacity: 0.6;
     cursor: not-allowed;
+  }
+
+  .link-btn {
+    background: none;
+    border: none;
+    padding: 0;
+    color: var(--accent);
+    text-decoration: underline;
+    cursor: pointer;
+    font-size: 13px;
+  }
+  .link-btn:hover {
+    filter: brightness(1.2);
+  }
+
+  .collapsed-open {
+    padding: 12px 16px;
   }
 
   .recents-panel {
@@ -766,7 +1162,7 @@
     line-height: 1.6;
   }
 
-  /* ── New Project (Step 5d) ──────────────────────────────────────────────── */
+  /* ── New Project Wizard Styles ────────────────────────────────────────── */
 
   header button {
     margin-top: 10px;
@@ -776,7 +1172,7 @@
     list-style: none;
     display: flex;
     gap: 0.5rem;
-    margin: 0 0 1rem;
+    margin: 0 0 1.25rem;
     padding: 0;
   }
   .steps li {
@@ -788,10 +1184,12 @@
     padding: 4px 10px;
     border: 1px solid var(--line);
     border-radius: 999px;
+    user-select: none;
   }
   .steps li.active {
     color: var(--text);
     border-color: var(--accent);
+    background: var(--panel-2);
   }
   .steps li.done {
     color: var(--ok);
@@ -813,34 +1211,201 @@
     resize: vertical;
     font: inherit;
     font-size: 13px;
-    padding: 8px;
-    border-radius: 4px;
+    padding: 8px 10px;
+    border-radius: 5px;
     border: 1px solid var(--line);
-    background: var(--panel-2);
+    background: var(--bg);
     color: var(--text);
+    box-sizing: border-box;
   }
+  .reply-textarea {
+    font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+    font-size: 12px;
+    line-height: 1.4;
+  }
+
   .brief-problems {
     margin: 0.5rem 0 0;
   }
   .refusal {
-    color: var(--warning);
+    color: var(--danger);
     font-size: 12px;
     line-height: 1.5;
     white-space: pre-wrap;
-    margin: 0 0 0.5rem;
+    margin: 4px 0 0;
   }
   .prompt {
-    margin: 0 0 0.75rem;
+    margin: 0;
     padding: 10px;
-    max-height: 340px;
+    max-height: 300px;
     overflow: auto;
-    background: var(--panel-2);
+    background: var(--bg);
     border: 1px solid var(--line);
-    border-radius: 4px;
+    border-radius: 5px;
     font-family: ui-monospace, 'SF Mono', Menlo, monospace;
     font-size: 11px;
     line-height: 1.5;
     white-space: pre-wrap;
     color: var(--text);
+  }
+
+  .summary-line {
+    margin: 6px 0 0;
+    font-size: 12px;
+    font-weight: 600;
+  }
+  .summary-line.ok {
+    color: var(--ok);
+  }
+  .summary-line.error {
+    color: var(--danger);
+  }
+
+  .file-verdict-list {
+    list-style: none;
+    margin: 6px 0 0;
+    padding: 0;
+    max-height: 180px;
+    overflow-y: auto;
+    border: 1px solid var(--line);
+    border-radius: 5px;
+    background: var(--bg);
+  }
+  .file-verdict-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 10px;
+    border-bottom: 1px solid var(--line);
+    font-size: 12px;
+    font-family: ui-monospace, Menlo, monospace;
+  }
+  .file-verdict-item:last-child {
+    border-bottom: none;
+  }
+  .tag-new {
+    background: var(--accent);
+    color: #06121a;
+    font-size: 10px;
+    font-weight: 700;
+    padding: 1px 4px;
+    border-radius: 3px;
+    letter-spacing: 0.05em;
+  }
+  .file-path {
+    flex: 1;
+    word-break: break-all;
+  }
+  .verdict-ok {
+    color: var(--ok);
+    font-weight: 700;
+  }
+  .verdict-error {
+    color: var(--danger);
+    font-size: 11px;
+    font-weight: 600;
+  }
+  .will-create {
+    margin: 8px 0 0;
+    font-size: 12px;
+    color: var(--muted);
+  }
+  .will-create code {
+    color: var(--text);
+  }
+
+  .created-banner {
+    margin: 0;
+    font-size: 13px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .packages-box {
+    background: var(--bg);
+    border: 1px solid var(--line);
+    border-radius: 5px;
+    padding: 10px;
+    max-height: 140px;
+    overflow-y: auto;
+  }
+  .box-title {
+    display: block;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--muted);
+    margin-bottom: 6px;
+  }
+  .package-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    font-family: ui-monospace, Menlo, monospace;
+    font-size: 12px;
+  }
+  .pkg-ver {
+    color: var(--muted);
+  }
+  .pkg-dev {
+    font-size: 10px;
+    padding: 1px 4px;
+    border-radius: 3px;
+    background: var(--panel-2);
+    color: var(--muted);
+    border: 1px solid var(--line);
+  }
+
+  .install-notice {
+    margin-top: 4px;
+  }
+
+  .log-box-wrapper {
+    max-height: 240px;
+    overflow-y: auto;
+    background: var(--bg);
+    border: 1px solid var(--line);
+    border-radius: 5px;
+  }
+  .log-box {
+    margin: 0;
+    padding: 8px 10px;
+    font-family: ui-monospace, Menlo, monospace;
+    font-size: 11px;
+    line-height: 1.4;
+    white-space: pre-wrap;
+    word-break: break-all;
+    color: var(--text);
+  }
+
+  .install-ok-line {
+    margin: 6px 0 0;
+    font-size: 12px;
+    color: var(--ok);
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .dev-banner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 8px 12px;
+    background: var(--bg);
+    border: 1px solid var(--ok);
+    border-radius: 5px;
+    font-size: 12px;
+  }
+  .dev-open-btn {
+    height: 28px;
+    padding: 0 10px;
+    font-size: 12px;
   }
 </style>

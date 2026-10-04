@@ -159,6 +159,14 @@ export interface EditorStore {
    */
   valueOf<R>(result: R): SuccessOf<R> | null;
 
+  /**
+   * Listen to an IPC push event.
+   */
+  onEvent<V extends EventName>(
+    event: V,
+    handler: (payload: EventPayloadFor<V>) => void,
+  ): () => void;
+
   // ── Scene ──────────────────────────────────────────────────────────────
   /**
    * Apply one edit and adopt the resulting snapshot.
@@ -753,6 +761,13 @@ export function createEditorStore(deps: StoreDeps): EditorStore {
         for (const off of unsubscribes) off();
         unsubscribes = [];
       };
+    },
+
+    onEvent<V extends EventName>(
+      event: V,
+      handler: (payload: EventPayloadFor<V>) => void,
+    ): () => void {
+      return deps.listener(event, handler);
     },
 
     destroy() {
