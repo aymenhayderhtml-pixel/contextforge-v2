@@ -185,7 +185,7 @@ describe('backend — opening a project', () => {
 
     expect(snapshot.scene.instances).toEqual([]);
     expect(snapshot.project.scenePath).toBe('scene.json');
-    expect(snapshot.problems.join(' ')).toMatch(/No scene\.json/);
+    expect(snapshot.problems.join(' ')).toMatch(/This folder has no scene\.json yet\./);
   });
 
   it('finds the first scene under scenes/ when there is no root scene.json', async () => {

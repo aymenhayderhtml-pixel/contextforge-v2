@@ -155,7 +155,13 @@ const backend = new AppBackend(
   (event, payload) => {
     sendToFocused(event, payload);
   },
-  { picker },
+  {
+    picker,
+    userDataPath: app.getPath('userData'),
+    openExternal: async (url) => {
+      await shell.openExternal(url);
+    },
+  },
 );
 
 /** Deliver one push event, to the focused window if there is one. */

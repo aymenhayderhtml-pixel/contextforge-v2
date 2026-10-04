@@ -38,6 +38,7 @@
  */
 
 import type {
+  CreateProjectResult,
   DependencyGraph,
   FocusDepth,
   FocusedNode,
@@ -47,6 +48,7 @@ import type {
   GraphSummary,
   MissingAsset,
   Orphan,
+  PreviewProjectResult,
   SceneFile,
   SceneEdit,
   UnparseableFile,
@@ -317,6 +319,56 @@ export const CHANNELS = {
    * reason this feature needs exactly one.
    */
   searchProject: 'search:project',
+
+  // ── New Project Flow & Runner (Alpha-1) ──────────────────────────────────
+  /**
+   * Preview a new project created from an AI reply.
+   *
+   * Reason: Parses the AI reply with core's `previewProjectFromReply` and returns
+   * files and syntax verdicts without touching disk, letting the developer review
+   * before creating.
+   */
+  previewProjectReply: 'project:reply-preview',
+
+  /**
+   * Create a new project folder and write all files from the AI reply.
+   *
+   * Reason: Writes all files atomically using `createProjectFromReply`, then
+   * registers the new folder into `pickedRoots` so it can be opened by the app.
+   */
+  createProjectReply: 'project:reply-create',
+
+  /**
+   * Run `npm install --ignore-scripts` inside the project folder.
+   *
+   * Reason: Runs package installation safely inside the project folder with
+   * fixed argument array, streaming output, time limit, output cap, and process cancellation.
+   */
+  installProject: 'project:install',
+
+  /**
+   * Run `npm run dev` inside the project folder.
+   *
+   * Reason: Starts the dev server safely, streams output, detects loopback URL
+   * (http://127.0.0.1 or http://localhost), and allows stopping the dev server.
+   */
+  runProjectDev: 'project:dev-run',
+
+  /**
+   * Safely open a local dev server URL in the system browser.
+   *
+   * Reason: Strict gate that accepts only validated http://127.0.0.1 or http://localhost
+   * URLs before calling shell.openExternal.
+   */
+  openDevUrl: 'project:open-dev-url',
+
+  /**
+   * Get or set the remembered default projects folder.
+   *
+   * Reason: Persists and retrieves the default projects folder in userData,
+   * defaulting to ~/Documents/ContextForge Projects.
+   */
+  projectsFolder: 'settings:projects-folder',
 } as const;
 
 /** One channel name. */
@@ -330,6 +382,12 @@ export const EVENTS = {
   prefabsChanged: 'prefabs:changed',
   /** A long operation finished or failed. Carries a human-readable message. */
   notice: 'app:notice',
+  /** Output line from install or dev server. */
+  processOutput: 'project:process-output',
+  /** The dev server is ready at a detected loopback URL. */
+  devServerReady: 'project:dev-ready',
+  /** A spawned runner process exited. */
+  processExit: 'project:process-exit',
 } as const;
 
 /** One push event name — the *value* of the entry, e.g. `scene:changedOnDisk`. */
@@ -363,6 +421,24 @@ export interface PrefabsChanged {
 export interface Notice {
   level: 'info' | 'warning' | 'error';
   message: string;
+}
+
+/** The payload of `project:process-output`. */
+export interface ProcessOutputEvent {
+  phase: 'install' | 'dev';
+  line: string;
+}
+
+/** The payload of `project:dev-ready`. */
+export interface DevServerReadyEvent {
+  url: string;
+}
+
+/** The payload of `project:process-exit`. */
+export interface ProcessExitEvent {
+  phase: 'install' | 'dev';
+  exitCode: number | null;
+  signal: string | null;
 }
 
 // ── Patch (Step 4) ───────────────────────────────────────────────────────────
@@ -938,6 +1014,38 @@ export interface IpcRequests {
     };
     response: Result<SearchResponse>;
   };
+
+  // ── New Project Flow & Runner (Alpha-1) ──────────────────────────────────
+
+  [CHANNELS.previewProjectReply]: {
+    request: { parentFolder: string; projectName: string; reply: string };
+    response: Result<PreviewProjectResult>;
+  };
+
+  [CHANNELS.createProjectReply]: {
+    request: { parentFolder: string; projectName: string; reply: string };
+    response: Result<CreateProjectResult>;
+  };
+
+  [CHANNELS.installProject]: {
+    request: { projectPath: string; cancel?: boolean };
+    response: Result<{ running: boolean; exitCode?: number | null; output: string[] }>;
+  };
+
+  [CHANNELS.runProjectDev]: {
+    request: { projectPath: string; stop?: boolean };
+    response: Result<{ running: boolean; url?: string | null; output: string[] }>;
+  };
+
+  [CHANNELS.openDevUrl]: {
+    request: { url: string };
+    response: Result<{ opened: boolean }>;
+  };
+
+  [CHANNELS.projectsFolder]: {
+    request: { action: 'get' } | { action: 'set'; folder: string };
+    response: Result<{ folder: string }>;
+  };
 };
 
 /**
@@ -1034,6 +1142,9 @@ export interface EventPayloadByName {
   'app:notice': Notice;
   'prefabs:changed': PrefabsChanged;
   'scene:changedOnDisk': SceneChangedOnDisk;
+  'project:process-output': ProcessOutputEvent;
+  'project:dev-ready': DevServerReadyEvent;
+  'project:process-exit': ProcessExitEvent;
 }
 
 /** The payload one event's channel value must carry. */

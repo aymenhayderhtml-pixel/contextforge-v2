@@ -44,8 +44,9 @@ import {
   rmSync,
   statSync,
   watch,
+  writeFileSync,
 } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import {
   applyEditBlocks,
@@ -54,6 +55,7 @@ import {
   buildScaffoldPrompt,
   captureAndWrite,
   compileContext,
+  createProjectFromReply,
   emptyScene,
   edgesWithin,
   extractFileReferences,
@@ -68,6 +70,7 @@ import {
   normalizeProjectPath,
   parseEditBlocks,
   parseFileBlocks,
+  previewProjectFromReply,
   readBrief,
   readFileOrNull,
   recordHistoryStep,
@@ -85,6 +88,7 @@ import {
   validateContentSyntax,
   validateScene,
   writeFileBlocks,
+  type CreateProjectResult,
   type Manifest,
   type DependencyGraph,
   type FocusDepth,
@@ -96,6 +100,7 @@ import {
   type HistoryActionResult,
   type MissingAsset,
   type Orphan,
+  type PreviewProjectResult,
   type SceneEdit,
   type SceneFile,
   type UnparseableFile,
@@ -127,6 +132,7 @@ import {
   type SearchResponse,
 } from '../ipc.js';
 import { bundlePrefabsForBrowser, createPrefabLoader, type PrefabLoader } from './prefabLoader.js';
+import { ProcessManager, validateDevUrl } from './processRunner.js';
 
 /**
  * How a file the developer ticked, or an AI asked for, is put in front of core's
@@ -948,6 +954,12 @@ interface Requests {
   [CHANNELS.generateBrief]: { mode: BriefMode; task?: string };
   [CHANNELS.readBrief]: Record<string, never>;
   [CHANNELS.searchProject]: { query: string; kind?: SearchKind };
+  [CHANNELS.previewProjectReply]: { parentFolder: string; projectName: string; reply: string };
+  [CHANNELS.createProjectReply]: { parentFolder: string; projectName: string; reply: string };
+  [CHANNELS.installProject]: { projectPath: string; cancel?: boolean };
+  [CHANNELS.runProjectDev]: { projectPath: string; stop?: boolean };
+  [CHANNELS.openDevUrl]: { url: string };
+  [CHANNELS.projectsFolder]: { action: 'get' } | { action: 'set'; folder: string };
 }
 
 /** One channel: the channel name, its request type and its response type. */
@@ -1007,6 +1019,7 @@ export class AppBackend {
    * project the developer opened, which is a handful of strings.
    */
   private readonly pickedRoots = new Set<string>();
+  private readonly processManager = new ProcessManager();
 
   /** @param send deliver a push event to the renderer. */
   constructor(
@@ -1037,6 +1050,9 @@ export class AppBackend {
        * the refusal — `auditSecurity.test.ts` does exactly that.
        */
       allowUnpickedRoot?: 'test-only';
+      userDataPath?: string;
+      openExternal?: (url: string) => Promise<void>;
+      npmPath?: string;
     } = {},
   ) {}
 
@@ -1108,10 +1124,7 @@ export class AppBackend {
     if (this.sceneLocation === null) {
       this.sceneLocation = { relativePath: 'scene.json', absolutePath: join(root, 'scene.json') };
       this.scene = emptyScene(projectName(root), 0);
-      this.problems = [
-        `No scene.json and no scenes/*.scene.json under ${root} — the project opens with an ` +
-          'empty scene. Saving will create scene.json.',
-      ];
+      this.problems = ['This folder has no scene.json yet.'];
     } else {
       const read = readSceneFile(this.sceneLocation.absolutePath, null);
       this.scene = read.scene;
@@ -2315,10 +2328,206 @@ export class AppBackend {
     this.prefabLoader = null;
     this.registry = { prefabs: [], failed: [] };
     this.lastWritten = null;
-    this.problems = [];
+    this.processManager.teardown();
     this.root = null;
     this.sceneLocation = null;
     this.scene = emptyScene('Level1', 0);
+  }
+
+  // ── New Project & Runner (Alpha-1) ───────────────────────────────────────
+
+  /**
+   * Preview a project creation from an AI reply without writing to disk.
+   */
+  async previewProjectReply(request: {
+    parentFolder: string;
+    projectName: string;
+    reply: string;
+  }): Promise<Result<PreviewProjectResult>> {
+    const preview = previewProjectFromReply(
+      request.parentFolder,
+      request.projectName,
+      request.reply,
+    );
+    return ok(preview);
+  }
+
+  /**
+   * Create a new project folder and write all files from the AI reply.
+   * On success, registers the new folder into pickedRoots (SEC-4).
+   */
+  async createProjectReply(request: {
+    parentFolder: string;
+    projectName: string;
+    reply: string;
+  }): Promise<Result<CreateProjectResult>> {
+    const trimmedParent = (request.parentFolder ?? '').trim();
+    if (!trimmedParent) return fail('Parent folder cannot be empty.');
+
+    try {
+      if (!existsSync(trimmedParent)) {
+        mkdirSync(trimmedParent, { recursive: true });
+      }
+    } catch (err) {
+      return fail(`Could not create parent folder: ${describe(err)}`);
+    }
+
+    const result = createProjectFromReply(trimmedParent, request.projectName, request.reply);
+    if (!result.ok) {
+      return ok(result);
+    }
+
+    // Authorize newly created folder in pickedRoots (SEC-4)
+    const resolvedTarget = safeRealpath(result.targetFolder) ?? result.targetFolder;
+    this.pickedRoots.add(resolvedTarget);
+    this.pickedRoots.add(result.targetFolder);
+
+    // Save parent folder in settings
+    void this.projectsFolder({ action: 'set', folder: trimmedParent });
+
+    return ok(result);
+  }
+
+  /**
+   * Run `npm install --ignore-scripts` inside project folder.
+   */
+  async installProject(request: {
+    projectPath: string;
+    cancel?: boolean;
+  }): Promise<Result<{ running: boolean; exitCode?: number | null; output: string[] }>> {
+    if (request.cancel) {
+      this.processManager.cancelInstall();
+      return ok({
+        running: false,
+        output: this.processManager.getInstallOutput(),
+      });
+    }
+
+    const start = this.processManager.startInstall(
+      request.projectPath,
+      (line) => {
+        this.send(EVENTS.processOutput, { phase: 'install', line });
+      },
+      (exitCode, signal) => {
+        this.send(EVENTS.processExit, { phase: 'install', exitCode, signal });
+      },
+      this.deps.npmPath,
+    );
+
+    if (!start.ok) {
+      return fail(start.reason);
+    }
+
+    return ok({
+      running: true,
+      output: this.processManager.getInstallOutput(),
+    });
+  }
+
+  /**
+   * Run `npm run dev` inside project folder.
+   */
+  async runProjectDev(request: {
+    projectPath: string;
+    stop?: boolean;
+  }): Promise<Result<{ running: boolean; url?: string | null; output: string[] }>> {
+    if (request.stop) {
+      this.processManager.stopDev();
+      return ok({
+        running: false,
+        url: null,
+        output: this.processManager.getDevOutput(),
+      });
+    }
+
+    const start = this.processManager.startDev(
+      request.projectPath,
+      (line) => {
+        this.send(EVENTS.processOutput, { phase: 'dev', line });
+      },
+      (url) => {
+        this.send(EVENTS.devServerReady, { url });
+      },
+      (exitCode, signal) => {
+        this.send(EVENTS.processExit, { phase: 'dev', exitCode, signal });
+      },
+      this.deps.npmPath,
+    );
+
+    if (!start.ok) {
+      return fail(start.reason);
+    }
+
+    return ok({
+      running: true,
+      url: this.processManager.getDevUrl(),
+      output: this.processManager.getDevOutput(),
+    });
+  }
+
+  /**
+   * Safely open dev server loopback URL in external browser.
+   */
+  async openDevUrl(request: { url: string }): Promise<Result<{ opened: boolean }>> {
+    if (!validateDevUrl(request.url)) {
+      return fail(
+        `Refused to open external URL "${request.url}". Only http://127.0.0.1 and http://localhost are allowed.`,
+      );
+    }
+
+    if (this.deps.openExternal) {
+      try {
+        await this.deps.openExternal(request.url);
+      } catch (err) {
+        return fail(`Could not open browser: ${describe(err)}`);
+      }
+    }
+    return ok({ opened: true });
+  }
+
+  /**
+   * Get or set default projects folder in userData settings.
+   */
+  async projectsFolder(
+    request: { action: 'get' } | { action: 'set'; folder: string },
+  ): Promise<Result<{ folder: string }>> {
+    const defaultFolder = join(homedir(), 'Documents', 'ContextForge Projects');
+    const settingsPath = this.deps.userDataPath
+      ? join(this.deps.userDataPath, 'settings.json')
+      : null;
+
+    if (request.action === 'get') {
+      if (settingsPath && existsSync(settingsPath)) {
+        try {
+          const content = readFileSync(settingsPath, 'utf-8');
+          const parsed = JSON.parse(content);
+          if (
+            typeof parsed.defaultProjectsFolder === 'string' &&
+            parsed.defaultProjectsFolder.trim()
+          ) {
+            return ok({ folder: parsed.defaultProjectsFolder.trim() });
+          }
+        } catch {
+          // ignore corrupted settings and fall back to default
+        }
+      }
+      return ok({ folder: defaultFolder });
+    }
+
+    const folderToSet = (request.folder ?? '').trim() || defaultFolder;
+    if (settingsPath) {
+      try {
+        mkdirSync(dirname(settingsPath), { recursive: true });
+        writeFileSync(
+          settingsPath,
+          JSON.stringify({ defaultProjectsFolder: folderToSet }, null, 2),
+          'utf-8',
+        );
+      } catch (err) {
+        return fail(`Could not save settings: ${describe(err)}`);
+      }
+    }
+    return ok({ folder: folderToSet });
   }
 }
 
@@ -2400,6 +2609,36 @@ const HANDLERS: ReadonlyArray<(backend: AppBackend) => ChannelBinding> = [
     CHANNELS.searchProject,
     (request: Requests[typeof CHANNELS.searchProject]) =>
       Promise.resolve(backend.searchProject(request)),
+  ],
+  (backend) => [
+    CHANNELS.previewProjectReply,
+    (request: Requests[typeof CHANNELS.previewProjectReply]) =>
+      Promise.resolve(backend.previewProjectReply(request)),
+  ],
+  (backend) => [
+    CHANNELS.createProjectReply,
+    (request: Requests[typeof CHANNELS.createProjectReply]) =>
+      Promise.resolve(backend.createProjectReply(request)),
+  ],
+  (backend) => [
+    CHANNELS.installProject,
+    (request: Requests[typeof CHANNELS.installProject]) =>
+      Promise.resolve(backend.installProject(request)),
+  ],
+  (backend) => [
+    CHANNELS.runProjectDev,
+    (request: Requests[typeof CHANNELS.runProjectDev]) =>
+      Promise.resolve(backend.runProjectDev(request)),
+  ],
+  (backend) => [
+    CHANNELS.openDevUrl,
+    (request: Requests[typeof CHANNELS.openDevUrl]) =>
+      Promise.resolve(backend.openDevUrl(request)),
+  ],
+  (backend) => [
+    CHANNELS.projectsFolder,
+    (request: Requests[typeof CHANNELS.projectsFolder]) =>
+      Promise.resolve(backend.projectsFolder(request)),
   ],
 ];
 
