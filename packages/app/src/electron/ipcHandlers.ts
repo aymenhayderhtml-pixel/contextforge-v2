@@ -73,8 +73,10 @@ import {
   recordHistoryStep,
   redoSceneEdit,
   rankRelevantFiles,
+  resolveInsideRoot,
   saveScene,
   scaffoldPromptProblems,
+  scanFiles,
   sceneHistoryStatus,
   summariseGraph,
   undoSceneEdit,
@@ -119,6 +121,10 @@ import {
   type RankedFileRow,
   type Result,
   type SceneSnapshot,
+  type SearchFileHit,
+  type SearchKind,
+  type SearchMatchHit,
+  type SearchResponse,
 } from '../ipc.js';
 import { bundlePrefabsForBrowser, createPrefabLoader, type PrefabLoader } from './prefabLoader.js';
 
@@ -712,6 +718,155 @@ function describePatchStep(plan: PatchPlan): string {
   return `Patch: ${shown}${rest}`;
 }
 
+// ── Search (lane-search) ───────────────────────────────────────────────────────
+
+/**
+ * The file types search will look inside.
+ *
+ * Search covers *text a developer writes*, not every byte in the project. Binary
+ * formats — images, audio, GLB meshes, compiled bundles — are excluded because a
+ * literal substring search over them produces matches at meaningless byte offsets
+ * and a "line" that is not a line. They remain findable by **name**, which is the
+ * question a binary file is ever the answer to.
+ *
+ * `.ts/.js` and their build outputs, `.json` (scene.json!), `.godot` and `.tscn`
+ * (GDScript) cover both engines this app supports. `scene.json` is the single most
+ * searched file in the app, so `.json` being here is not an afterthought.
+ */
+const SEARCH_EXTENSIONS: ReadonlySet<string> = new Set([
+  '.ts',
+  '.tsx',
+  '.js',
+  '.jsx',
+  '.mjs',
+  '.cjs',
+  '.json',
+  '.gd',
+  '.tscn',
+  '.tres',
+  '.godot',
+  '.md',
+  '.txt',
+  '.html',
+  '.css',
+  '.yml',
+  '.yaml',
+  '.toml',
+]);
+
+/** Matches per file. A file that mentions a term 400× is one file to open. */
+const SEARCH_MAX_MATCHES_PER_FILE = 50;
+
+/** Bytes of one file that will be searched. Past this its *contents* are skipped. */
+const SEARCH_MAX_FILE_BYTES = 2 * 1024 * 1024;
+
+/** Characters of one matched line kept for display. */
+const SEARCH_MAX_LINE_CHARS = 300;
+
+/** Total line matches across the whole project. */
+const SEARCH_MAX_TOTAL_MATCHES = 500;
+
+/** Total file-name hits across the whole project. */
+const SEARCH_MAX_FILE_HITS = 200;
+
+/**
+ * The query, lowercased and trimmed — or `null` when there is nothing to search.
+ *
+ * An empty query is `null`, not an error: an empty search box is its ordinary
+ * state (see the channel's doc comment). Case-folding happens here, once, and the
+ * comparison uses `toLowerCase` on the haystack too, so "case-insensitive" has
+ * exactly one meaning on both sides.
+ */
+function normalizeSearchQuery(query: string): string | null {
+  const trimmed = (query ?? '').trim().toLowerCase();
+  return trimmed === '' ? null : trimmed;
+}
+
+/**
+ * Does a project-relative path contain the query?
+ *
+ * Matched against the whole path, not just the basename, so `prefabs/` finds the
+ * files in that folder.
+ */
+function searchPathMatches(relativePath: string, needle: string): boolean {
+  return relativePath.toLowerCase().includes(needle);
+}
+
+/** Split into lines, tolerating CRLF and a file with no final newline. */
+function searchSplitLines(text: string): string[] {
+  return text.split('\n').map((line) => (line.endsWith('\r') ? line.slice(0, -1) : line));
+}
+
+/** Trim a matched line and cap it, so one minified line cannot flood the list. */
+function searchDisplayLine(line: string): string {
+  const trimmed = line.replace(/^\s+/, '');
+  return trimmed.length > SEARCH_MAX_LINE_CHARS
+    ? `${trimmed.slice(0, SEARCH_MAX_LINE_CHARS)}…`
+    : trimmed;
+}
+
+/**
+ * Every line of one file containing `needle`, with the per-file cap.
+ *
+ * `needle` is already normalised; it is not folded again, so there is one
+ * definition of what a query means. `column` indexes the **displayed** line — see
+ * `searchColumnInDisplayLine`, which explains why that distinction is load-bearing.
+ */
+function searchLineMatches(
+  relativePath: string,
+  text: string,
+  needle: string,
+): { matches: SearchMatchHit[]; truncated: boolean } {
+  const lines = searchSplitLines(text);
+  const matches: SearchMatchHit[] = [];
+  let truncated = false;
+
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i] as string;
+    if (line.toLowerCase().indexOf(needle) === -1) continue;
+
+    if (matches.length >= SEARCH_MAX_MATCHES_PER_FILE) {
+      truncated = true;
+      break;
+    }
+    matches.push({
+      path: relativePath,
+      // `i` is 0-based; a line number is 1-based. This +1 is the whole reason
+      // this is a function and not a raw indexOf at the call site.
+      line: i + 1,
+      column: searchColumnInDisplayLine(line, needle),
+      text: searchDisplayLine(line),
+    });
+  }
+
+  return { matches, truncated };
+}
+
+/**
+ * The 1-based column of `needle` **in the line as it is sent to the renderer**.
+ *
+ * ## Why this is not just `indexOf(line) + 1`
+ *
+ * `MatchHit.text` is the line with its leading whitespace trimmed and its tail
+ * possibly elided, and `column` has to index *that same string* — otherwise the
+ * renderer's highlight lands at the wrong offset by exactly the amount of
+ * indentation removed, which is invisible on an unindented line and wrong on
+ * every indented one. It looked right in the first draft because the test fixture
+ * had no indentation, and the renderer test caught it as soon as one did.
+ *
+ * So the column is measured against the displayed string. When the line was long
+ * enough to be elided and the match fell inside the elided tail, `indexOf` on the
+ * preview misses it, and this returns `1` — the first character — rather than a
+ * confident wrong number. The renderer also declines to highlight when it cannot
+ * locate the needle, so the two agree: an elided match shows no highlight instead
+ * of one on the wrong characters.
+ */
+function searchColumnInDisplayLine(line: string, needle: string): number {
+  const display = searchDisplayLine(line);
+  const index = display.toLowerCase().indexOf(needle);
+  return index === -1 ? 1 : index + 1;
+}
+
 // ── The backend ─────────────────────────────────────────────────────────────
 
 /** The subset of Electron's `IpcMain` this module uses. */
@@ -792,6 +947,7 @@ interface Requests {
   [CHANNELS.patchHistory]: Record<string, never>;
   [CHANNELS.generateBrief]: { mode: BriefMode; task?: string };
   [CHANNELS.readBrief]: Record<string, never>;
+  [CHANNELS.searchProject]: { query: string; kind?: SearchKind };
 }
 
 /** One channel: the channel name, its request type and its response type. */
@@ -1719,6 +1875,149 @@ export class AppBackend {
     });
   }
 
+  // ── Search (lane-search) ───────────────────────────────────────────────────
+
+  /**
+   * Search the open project's paths and contents.
+   *
+   * ## The order of the two checks, and why it is this order
+   *
+   * **The project check comes first.** Searching with no project open is a
+   * developer's own mistake, and it gets a sentence about that rather than an
+   * empty list — an empty list for "no project is open" looks exactly like an
+   * empty list for "nothing matched", and the second one is a normal answer.
+   *
+   * **The empty-query check comes second**, and it returns `ok`, not a refusal.
+   * See the channel's own doc comment: an empty search box is its ordinary state.
+   *
+   * ## Every path is re-checked against the root, even though the walk started there
+   *
+   * `scanFiles` already returns paths under `root`, so this looks redundant and is
+   * not. `scanFiles` walks with `readdirSync` and does not consult
+   * `resolveInsideRoot`; a directory inside the project can be a **symlink** to
+   * somewhere else, and the walk follows it. So every candidate is put back
+   * through `resolveInsideRoot` — the one containment check (D51) — and a refused
+   * one is skipped and reported.
+   *
+   * The alternative, trusting the walk, would make search the second reader to
+   * reach outside the project. D51 exists precisely because four places did that
+   * independently; a fifth that "looked safe because it started at the root" is
+   * how the defect comes back.
+   *
+   * ## Why the matching rules live here and not in `renderer/search/`
+   *
+   * The first draft put the pure matching algorithm in
+   * `renderer/search/match.ts` and imported it here. **That does not compile**,
+   * and the reason is the project graph: `packages/app/tsconfig.json` excludes
+   * `src/renderer`, so `tsc` (which builds this file) refuses an import from
+   * there with `TS6307 — not listed within the file list`. The renderer is
+   * checked by `svelte-check` under a separate config, not by this project. So
+   * main↔renderer module imports do not exist in this codebase at all — not as a
+   * rule anyone wrote down, but as a fact `tsconfig.json:10` enforces.
+   *
+   * The search *algorithm* is therefore here, next to the I/O it feeds, and
+   * `renderer/search/` keeps the renderer's half: summarising a result, previewing
+   * a line, locating a highlight. Both sides operate on the same
+   * `SearchResponse` type from `ipc.ts`, so they cannot disagree about what a
+   * result *is*.
+   */
+  searchProject(request: Requests[typeof CHANNELS.searchProject]): Result<SearchResponse> {
+    const root = this.root;
+    if (root === null) {
+      return fail('No project is open, so there is nothing to search. Open a project first.');
+    }
+
+    const needle = normalizeSearchQuery(request.query ?? '');
+    const kind: SearchKind = request.kind ?? 'all';
+
+    // Empty query: an answer, not a refusal. `scannedFiles: 0` is deliberate — the
+    // project was not walked at all, so claiming it scanned anything would be false.
+    if (needle === null) {
+      return ok({
+        files: [],
+        matches: [],
+        truncated: false,
+        truncatedReason: '',
+        scannedFiles: 0,
+        skipped: [],
+      });
+    }
+
+    const scanned = scanFiles(root, { extensions: SEARCH_EXTENSIONS });
+    const files: SearchFileHit[] = [];
+    const matches: SearchMatchHit[] = [];
+    const truncatedReasons: string[] = [];
+    const skipped: string[] = [];
+
+    for (const file of scanned) {
+      const containment = resolveInsideRoot(root, file.relativePath);
+      if (!containment.ok) {
+        // Refused by the one containment check. Reported, not silently dropped —
+        // a file the walk reached and the checker refused is exactly the case a
+        // developer needs to hear about, and it is the case D51 is about.
+        skipped.push(containment.reason);
+        continue;
+      }
+      if (!containment.value.existsOnDisk) continue;
+
+      const pathHit = kind !== 'contents' && searchPathMatches(file.relativePath, needle);
+      if (pathHit) {
+        files.push({ path: file.relativePath });
+      }
+
+      if (kind === 'files') continue;
+
+      const size = statSync(containment.value.absolutePath).size;
+      if (size > SEARCH_MAX_FILE_BYTES) {
+        skipped.push(
+          `"${file.relativePath}" is larger than ${SEARCH_MAX_FILE_BYTES} bytes, so its contents ` +
+            'were not searched. Its name was.',
+        );
+        continue;
+      }
+
+      // `readFileOrNull(root, relativePath)` re-checks containment internally, so
+      // this is the *same* check applied twice rather than a second one — a read
+      // that could escape the project would have to defeat `resolveInsideRoot`.
+      const text = readFileOrNull(root, file.relativePath);
+      if (text === null) {
+        // A file that exists but cannot be read — locked, or mid-write by an
+        // editor. Named rather than omitted, so a search that missed it can be
+        // told apart from a file with nothing in it.
+        skipped.push(`Could not read "${file.relativePath}", so its contents were not searched.`);
+        continue;
+      }
+
+      const found = searchLineMatches(file.relativePath, text, needle);
+      if (found.truncated) {
+        truncatedReasons.push(`"${file.relativePath}" matched more lines than are shown.`);
+      }
+      matches.push(...found.matches);
+    }
+
+    // The overall caps, applied last, with a sentence for each that bit. Split out
+    // so the cap and the sentence explaining it live together — a cap that
+    // silently truncates is the one failure mode of a limit that is worse than
+    // having no limit at all.
+    const keptFiles = files.slice(0, SEARCH_MAX_FILE_HITS);
+    const keptMatches = matches.slice(0, SEARCH_MAX_TOTAL_MATCHES);
+    if (files.length > keptFiles.length) {
+      truncatedReasons.push(`Only the first ${SEARCH_MAX_FILE_HITS} matching file names are shown.`);
+    }
+    if (matches.length > keptMatches.length) {
+      truncatedReasons.push(`Only the first ${SEARCH_MAX_TOTAL_MATCHES} matches are shown.`);
+    }
+
+    return ok({
+      files: keptFiles,
+      matches: keptMatches,
+      truncated: truncatedReasons.length > 0,
+      truncatedReason: truncatedReasons.join(' '),
+      scannedFiles: scanned.length,
+      skipped,
+    });
+  }
+
   /**
    * The scaffold prompt for a new project.
    *
@@ -2097,6 +2396,11 @@ const HANDLERS: ReadonlyArray<(backend: AppBackend) => ChannelBinding> = [
       Promise.resolve(backend.generateBrief(request)),
   ],
   (backend) => [CHANNELS.readBrief, () => Promise.resolve(backend.readBrief())],
+  (backend) => [
+    CHANNELS.searchProject,
+    (request: Requests[typeof CHANNELS.searchProject]) =>
+      Promise.resolve(backend.searchProject(request)),
+  ],
 ];
 
 /**
