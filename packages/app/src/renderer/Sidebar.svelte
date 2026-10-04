@@ -52,13 +52,22 @@
   /**
    * Whether a screen can be opened.
    *
-   * Context, Graph and Patch all read the open project — the ranker needs files
-   * on disk, the graph is extracted from them, and a patch needs somewhere to
-   * land — so they are gated on `projectName` rather than on a step number. They
-   * used to return `true` unconditionally here, which disabled them with a
-   * tooltip promising a future release long after the screens were built: a
-   * navigation entry that lies about what exists is worse than a missing one,
-   * because it hides working software behind a promise.
+   * Context, Graph, Scene and Patch all read the open project — the ranker needs
+   * files on disk, the graph is extracted from them, a scene is edited from one,
+   * and a patch needs somewhere to land — so they are gated on `projectName`
+   * rather than on a step number. They used to return `true` unconditionally
+   * here, which disabled them with a tooltip promising a future release long
+   * after the screens were built: a navigation entry that lies about what exists
+   * is worse than a missing one, because it hides working software behind a
+   * promise.
+   *
+   * Scene was left out of that list while it was still being built. It renders
+   * its own "No project is open" empty state, which made the omission look
+   * harmless — but the sidebar entry was clickable with nothing open, and every
+   * other screen that depends on the project was dimmed. Two surfaces answering
+   * "can I open this?" differently is the seam defect D34 is about, so the
+   * entry is gated like its siblings. The empty state stays: the screen is
+   * still reachable by other means and must still say what to do.
    *
    * An explicit `disabled` on the entry still wins, so a caller can disable a
    * screen for a reason of its own.
@@ -67,7 +76,12 @@
     if (typeof screen.disabled === 'boolean') {
       return screen.disabled;
     }
-    if (screen.id === 'context' || screen.id === 'graph' || screen.id === 'patch') {
+    if (
+      screen.id === 'context' ||
+      screen.id === 'graph' ||
+      screen.id === 'scene' ||
+      screen.id === 'patch'
+    ) {
       return projectName === null;
     }
     return false;

@@ -117,6 +117,45 @@ describe('Sidebar', () => {
     expect(open).not.toMatch(/<button[^>]*disabled=""[^>]*>[\s\S]*?Patch<\/span>/);
   });
 
+  it('disables Scene while no project is open, and enables it once one is', () => {
+    // Scene was the last screen left ungated. It has its own "No project is open"
+    // empty state, which made the omission look deliberate rather than forgotten — but
+    // the sidebar then answered "can I open this?" differently for Scene than for its
+    // three siblings. This is the rendering counterpart to the structural guard in
+    // screenRegressions.test.ts: that one proves the id is in the gate, this one proves
+    // the gate actually dims the row.
+    const closed = render(Sidebar, {
+      props: {
+        screens,
+        active: 'project',
+        onSelect: () => {},
+        projectName: null,
+        scenePath: null,
+        dirty: false,
+      },
+    }).body;
+
+    expect(closed).toMatch(
+      /<button[^>]*disabled=""[^>]*title="Open a project first[^"]*"[^>]*>[\s\S]*?Scene<\/span>/,
+    );
+
+    const open = render(Sidebar, {
+      props: {
+        screens,
+        active: 'project',
+        onSelect: () => {},
+        projectName: 'kart-dash-3d-v2',
+        scenePath: 'scene.json',
+        dirty: false,
+      },
+    }).body;
+
+    // Both directions, because a screen disabled unconditionally is as broken as one
+    // never disabled — and that mistake (D34) was once pinned by a test.
+    expect(open).not.toMatch(/<button[^>]*disabled=""[^>]*>[\s\S]*?Scene<\/span>/);
+    expect(open).toContain('Scene');
+  });
+
   it('renders project summary info correctly', () => {
     const { body } = render(Sidebar, {
       props: {

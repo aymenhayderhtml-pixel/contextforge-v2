@@ -151,7 +151,7 @@ npx electron-builder --linux AppImage      # packages the two into one AppImage
 ```
 
 **This machine has no FUSE**, so the AppImage cannot mount itself and running it
-prints `dlopen(): error loading libfuse.so.2`. Two ways round that:
+directly prints `dlopen(): error loading libfuse.so.2`. Three ways round that:
 
 ```bash
 sudo apt install libfuse2               # the normal fix
@@ -159,8 +159,13 @@ sudo apt install libfuse2               # the normal fix
 cd squashfs-root && ./AppRun --no-sandbox
 ```
 
-Either way the launcher below still works; FUSE affects only *running* the file
-directly, not installing it.
+Or just use the launcher below, which now detects this itself: it checks for
+`libfuse.so.2` on every run and adds `--appimage-extract-and-run` when the
+library is absent, so the same menu entry works with or without FUSE. You will
+see one line on stderr when it takes that path, because it is slower to start.
+
+Installing the launcher never needed FUSE; *running* the app it points at did,
+which is exactly what the wrapper now handles.
 
 ### Install the launcher
 

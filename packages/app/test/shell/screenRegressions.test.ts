@@ -142,6 +142,36 @@ describe('the sidebar no longer disables the screens it ships', () => {
     expect(sidebar).toMatch(/screen\.id === 'graph'/);
   });
 
+  it('gates Scene on an open project, like every screen that reads one', () => {
+    // Scene was the last screen left out of the gate. Its own "No project is open"
+    // empty state made that look harmless, but it meant the sidebar answered "can I
+    // open this?" differently for Scene than for Context, Graph and Patch — two
+    // surfaces disagreeing about the same question, which is the seam D34 is about.
+    expect(sidebar).toMatch(/screen\.id === 'scene'/);
+  });
+
+  it('gates every screen that reads the project, so none can be added ungated by accident', () => {
+    // The individual assertions above are one hand-written guard per screen id, and
+    // each was written after its own defect was found. This is the general form: every
+    // screen in the union that reads the open project must appear in the gate. It
+    // fails when a sixth screen is added and forgotten, which is how Scene was missed.
+    const union = read('renderer/Sidebar.svelte'); // the ScreenId union's owner
+    const declaration = union.match(/export type ScreenId\s*=\s*([^;]+);/);
+    expect(declaration, 'could not read the ScreenId union from Sidebar.svelte').not.toBeNull();
+    const ids = [...(declaration![1]!.matchAll(/'([a-z]+)'/g))].map((m) => m[1]!);
+    expect(ids.length, 'the ScreenId union held no ids').toBeGreaterThan(0);
+
+    // `project` is the screen that OPENS a project, so it must stay ungated; gating it
+    // would make it impossible to recover from having no project open.
+    const mustBeGated = ids.filter((id) => id !== 'project');
+    for (const id of mustBeGated) {
+      expect(
+        sidebar.includes(`screen.id === '${id}'`),
+        `screen '${id}' reads the open project but is not in isScreenDisabled's gate`,
+      ).toBe(true);
+    }
+  });
+
   it('every Cytoscape attribute selector quotes its value', () => {
     // Cytoscape rejects `node[focus = true]` — an attribute value is a quoted
     // string, not a bare identifier. It throws at draw time and leaves the
