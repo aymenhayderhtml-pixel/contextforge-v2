@@ -184,6 +184,8 @@ Push events, main to renderer, not in `CHANNELS`:
 | The launcher installs but app will not start | Needs `--appimage-extract-and-run` wrapper without `libfuse.so.2` (D55) |
 | `npm was not found` or install hangs | `app/src/electron/processRunner.ts` (PATH search across nvm/fnm/asdf; detached group kill, D56) |
 | New project creation refused | `core/src/patch/createFromReply.ts` (refuses non-empty folder, symlink escape, EDIT blocks, D56) |
+| A test leaks files or touches real `~/Documents` | `packages/app/test/globalSetup.ts` (suite snapshot guard), `app/src/electron/ipcHandlers.ts` |
+| Default projects folder resolved to wrong path | `app/src/electron/ipcHandlers.ts` (`defaultProjectsFolder` and `documentsPath` injection) |
 
 ---
 
