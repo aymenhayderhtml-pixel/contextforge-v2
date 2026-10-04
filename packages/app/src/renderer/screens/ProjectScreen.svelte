@@ -721,7 +721,8 @@
         <!-- Step 5: Install and run -->
         <div class="field-group">
           <p class="created-banner">
-            <span class="verdict-ok">✓</span> Created <code>{createdPath}</code>, {createdFilesCount} files written.
+            <span class="verdict-ok">✓</span>
+            <span>Created <code>{createdPath}</code>, {createdFilesCount} files written.</span>
           </p>
 
           <div class="packages-box">
