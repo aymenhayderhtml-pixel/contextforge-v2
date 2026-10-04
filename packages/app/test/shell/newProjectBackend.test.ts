@@ -109,6 +109,12 @@ describe('New Project backend IPC handlers', () => {
     const userData = tempDir();
     const backend = new AppBackend(() => {}, { userDataPath: userData });
 
+    // Clean up empty default folder if leftover from previous run so we can test pre-creation
+    const defaultTarget = join(homedir(), 'Documents', 'ContextForge Projects');
+    if (existsSync(defaultTarget) && readdirSync(defaultTarget).length === 0) {
+      rmSync(defaultTarget, { recursive: true, force: true });
+    }
+
     // 1. Initial get returns default ~/Documents/ContextForge Projects
     const initial = await backend.projectsFolder({ action: 'get' });
     expect(initial.ok).toBe(true);
