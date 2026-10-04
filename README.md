@@ -37,7 +37,7 @@ network calls of its own.
 ## What it does
 
 Every claim below is backed by a test in `packages/*/test/`. `npm run verify`
-runs all of them: **65 test files, 1258 tests, green.**
+runs all of them: **68 test files, 1407 tests, green.**
 
 ### Sees the whole project at once
 
@@ -359,7 +359,20 @@ npm run typecheck   # tsc --build
 4. **`lint:prefabs`** — prefab purity rules.
 5. **`test`** — Vitest across `packages/*/test/`.
 
-Current result: **65 files, 1258 tests, exit 0.**
+Current result: **68 files, 1407 tests, exit 0.**
+
+### If you are an AI agent
+
+Read **[`AI.md`](AI.md) first.** It is the project memory: the commands that
+actually work, where each feature lives, a symptom-to-file table, and the
+gotchas that cost the most time to learn — among them that the renderer may only
+`import type` from core, that `$state.snapshot` is required before anything
+crosses IPC, and that `kart-dash-3d-v2` is read-only.
+
+**Update `AI.md` in the same commit as any task that changes what it says.** A
+stale `AI.md` costs the next agent more time than it ever saved. A test,
+`packages/app/test/renderer/aiDocPaths.test.ts`, fails if any path it names stops
+existing, so it cannot drift away from the tree.
 
 ---
 

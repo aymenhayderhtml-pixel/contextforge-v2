@@ -139,7 +139,7 @@ npm test                              # vitest, all packages
 npx vitest run packages/core/test/graph/analysis.test.ts   # one file
 ```
 
-**Result on this machine: 65 test files, 1258 tests, ~50 s.**
+**Result on this machine: 68 test files, 1407 tests, ~50 s.**
 
 Most suites are pure Node. Two Electron e2e suites are **skipped by default** and
 say so in their output rather than passing silently. Run them with:
