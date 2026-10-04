@@ -61,10 +61,16 @@ function renderProject(store: ReturnType<typeof createEditorStore>): string {
   return render(ProjectScreen, { props: { store, onOpenScene: () => {} } }).body;
 }
 
-describe('New Project — the flow is three steps', () => {
-  it('names exactly three steps', () => {
-    expect(NEW_PROJECT_STEPS).toHaveLength(3);
-    expect([...NEW_PROJECT_STEPS]).toEqual(['Name it', 'Describe the game', 'Take the prompt']);
+describe('New Project — the flow is five steps', () => {
+  it('names exactly five steps', () => {
+    expect(NEW_PROJECT_STEPS).toHaveLength(5);
+    expect([...NEW_PROJECT_STEPS]).toEqual([
+      'Name it',
+      'Describe the game',
+      'Take the prompt',
+      'Paste the reply',
+      'Install and run',
+    ]);
   });
 
   it('offers a New project button', () => {
