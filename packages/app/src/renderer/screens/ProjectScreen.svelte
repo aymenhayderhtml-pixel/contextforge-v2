@@ -218,6 +218,9 @@
       } else if (payload.phase === 'dev') {
         devRunning = false;
         devUrl = null;
+        if (payload.exitCode !== 0 && payload.exitCode !== null) {
+          devError = `Dev server exited (code ${payload.exitCode}). Check if port 5173 is already in use.`;
+        }
       }
     });
 

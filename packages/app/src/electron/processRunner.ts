@@ -447,7 +447,8 @@ export class ProcessManager {
 
         // Dev server URL detection
         if (!this.devServerUrl) {
-          const match = line.match(urlRegex);
+          const stripped = line.replace(/[\u001b\u009b][[()#;?]*(?:[0-9]{1,4}(?:;[0-9]{0,4})*)?[0-9A-ORZcf-nqry=><]/g, '');
+          const match = stripped.match(urlRegex);
           if (match && match[1]) {
             const detectedUrl = match[1];
             if (validateDevUrl(detectedUrl)) {
